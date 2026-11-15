@@ -4,7 +4,7 @@
 
 ### Server
 
-- **`TRUSTED_PROXIES_LISTENERS` (defence in depth for hosted ingress).** `TRUSTED_PROXIES`
+- **`TRUSTED_PROXIES_LISTENERS` (defence in depth behind a shared proxy).** `TRUSTED_PROXIES`
   applied to every listener: a proxy trusted for the Config APIs also made the
   management port and the recovery door take forwarded addresses from it.
   `TRUSTED_PROXIES_LISTENERS` names the listeners that believe the header
@@ -66,7 +66,7 @@
   of never stale, and a request whose card cannot be read is not applied.
 - **`ADMIN_WRITES_FROZEN=true`** refuses every admin change (`423
   admin_writes_frozen`) while admin reads and every device call go on: for a
-  lapsed hosted subscription or maintenance, without stopping the server.
+  expired subscription or licence, or maintenance, without stopping the server.
 - **The key-set card says what is published**: version, a fingerprint per
   key, how many must sign, the Config APIs it is for (it said "v?").
 - Docs and compose: `demo-server/docker-compose.yml` passes every variable

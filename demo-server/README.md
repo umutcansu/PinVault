@@ -78,7 +78,7 @@ its configs.
 | `ADMIN_UPLOAD_MAX_BYTES` | `1048576` (1 MB) | Largest admin JSON body or upload (keystore, certificate) the server reads; `413` beyond it. 1024 bytes–64 MB. Vault files have their own cap, `VAULT_MAX_FILE_BYTES`. |
 | `APPROVAL_TTL_HOURS` | `24` | How long a change request waits for a second admin under `PIN_CHANGE_APPROVALS`; unapproved by then, it expires. At least 1. |
 | `PIN_LIVE_CHECK_ALLOW_OVERRIDE` | `true` | `false`: under `PIN_LIVE_CHECK=enforce` a pin set the live host fails cannot be published with `liveCheckOverride=<reason>` either. `true` or `false` in any case; anything else stops the start. |
-| `ADMIN_WRITES_FROZEN` | `false` | `true`: every admin change is refused (`423 admin_writes_frozen`); admin reads and everything devices do go on. For a lapsed hosted subscription or maintenance. Read at start. |
+| `ADMIN_WRITES_FROZEN` | `false` | `true`: every admin change is refused (`423 admin_writes_frozen`); admin reads and everything devices do go on. For an expired subscription or licence, or maintenance. Read at start. |
 | `LIVE_CHECK_TIMEOUT_MS` | `5000` | Connect and read timeout of one live-certificate check (`PIN_LIVE_CHECK`); the whole handshake gets twice this. |
 | `ISSUANCE_RATE_LIMIT` | `10` | *(2.2)* Certificates issued per client id per 10 minutes (open mode, enrollment codes). A device asking again with the same key within half its certificate's lifetime gets the same certificate back. |
 | `KEY_REPLACEMENT_RATE_LIMIT` | `10` | *(2.2)* End-to-end / screen-lock key replacements one client id may make over its certificate per 10 minutes. |

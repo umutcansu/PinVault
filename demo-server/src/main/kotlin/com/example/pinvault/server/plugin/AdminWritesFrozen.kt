@@ -17,9 +17,9 @@ class AdminWritesFrozenConfig {
  * admin_writes_frozen`); admin reads and everything devices do — config
  * fetches, enrollment, renewal, attestation, vault downloads, reports — go on.
  *
- * For a hosted server whose subscription lapsed (PinVault Cloud suspends a
- * tenant this way, never by stopping it: devices must keep the pins they rely
- * on), and for a self-hosted server during maintenance. A request counts as an
+ * For a server whose subscription or licence lapsed (suspend it this way,
+ * never by stopping it: devices must keep the pins they rely on), and for
+ * maintenance. A request counts as an
  * admin change when an admin key authenticated it ([AdminPrincipalKey], set by
  * [ApiKeyAuth]) and its method writes; device routes carry no admin principal,
  * so they are never touched. Install AFTER [ApiKeyAuth] and BEFORE the

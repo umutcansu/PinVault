@@ -90,7 +90,7 @@ GC was never the issue. At 512 MB, live data after a young GC averaged
 130 MB (max 258 MB); 394 young pauses took 0.7 s in all (one of 121 ms, the
 rest a few ms), with no full GC. At 2 GB there were 60 young pauses (148 ms
 in all, max 7 ms). RSS goes from ~0.78 GB to ~1.75 GB for the same
-throughput: **512 MB is enough for a tenant at this load**. The larger heap
+throughput: **512 MB is enough for one instance at this load**. The larger heap
 only shortens the overloaded tail a little.
 
 ## Smaller thread pools: `-XX:ActiveProcessorCount=2`, 512 MB (knee 300–400/s)
@@ -213,7 +213,7 @@ Where the time goes is **waiting, not computing**:
   signature) 27 %, token ES256 signing and key loading 21 %, the per-device
   rate limiter's table scan 7 %, JSON 1 %. Nonces, policy evaluation and
   Netty/Ktor are negligible. That is about **4–5 ms of CPU per round including
-  two TLS handshakes**: on a 1-vCPU tenant, CPU would cap a round rate in the
+  two TLS handshakes**: on a 1-vCPU instance, CPU would cap a round rate in the
   low hundreds per second, about where the lock caps it now.
 - **The per-device limiter's table is full.** `RateLimiter.maxKeys` is 10 000
   and the 10-minute windows stay live. With more than 10 000 devices, every
@@ -263,8 +263,8 @@ rounds/s per address, which is **30 devices per address** at the 5-minute
 interval. That is fine for phones on their own carrier addresses, tight
 behind a carrier-grade NAT or a corporate Wi-Fi, and fatal behind a reverse
 proxy or ingress unless `TRUSTED_PROXIES` names it. Without that, every device
-has the proxy's address and **the whole tenant gets 30 devices' worth of
-rounds**. A hosted tenant behind a shared ingress must set `TRUSTED_PROXIES`
+has the proxy's address and **the whole instance gets 30 devices' worth of
+rounds**. A server behind a shared proxy must set `TRUSTED_PROXIES`
 (and the ingress must pass the client address). `CONFIG_VIEW_SIGN_RATE_LIMIT`
 (120 narrowed signings per address per 10 minutes) behaves the same way.
 
@@ -284,8 +284,8 @@ rounds**. A hosted tenant behind a shared ingress must set `TRUSTED_PROXIES`
   transactions per round (1, or 2 after a config change, 3 plus a `COUNT`
   for a registration) let the result be translated.
 - **28 fast cores.** The knee here is contention, so more cores do not help
-  (pools sized for 2 processors did better than 28). A small tenant would hit CPU at about
-  4–5 ms per round, so a 1-vCPU tenant would cap at a few hundred rounds/s,
+  (pools sized for 2 processors did better than 28). A small instance would hit CPU at about
+  4–5 ms per round, so a 1-vCPU instance would cap at a few hundred rounds/s,
   close to the same knee.
 - **`warn` without a chain.** Under `enforce`, registration also verifies a
   chain (not measured; the verifier trusts only Google's roots). Steady-state

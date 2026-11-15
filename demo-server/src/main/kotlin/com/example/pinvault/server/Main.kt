@@ -274,7 +274,7 @@ private fun startServer() {
     // Governance plugins for every listener: the audit context (and cache
     // invalidation on admin writes) and, with approvals on, the approval gate.
     fun Application.installGovernance(management: Boolean) {
-        // A lapsed hosted subscription or maintenance: admin changes refused, devices served (423).
+        // An expired subscription or maintenance: admin changes refused, devices served (423).
         install(com.example.pinvault.server.plugin.AdminWritesFrozen) { frozen = adminWritesFrozen }
         install(com.example.pinvault.server.plugin.AdminAudit) {
             audit = auditLog
