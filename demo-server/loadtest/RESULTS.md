@@ -8,14 +8,22 @@ lock around the token signing key, which reads SQLite on every round, while
 every round also writes to SQLite through a fresh connection in rollback-journal
 mode. Two things drop the knee well below that:
 
-- **For one 5-minute cycle after every config change,** each round also writes
-  the device's config watermark. The knee then falls to about **130 rounds/s
-  (≈ 40 000 devices)**.
+- **A round whose device reports a newer config than before** also writes the
+  device's config watermark. With the signature cache off (the default with a
+  local key, `CONFIG_SIGNATURE_CACHE`), every config fetch is signed anew with
+  a new `issuedAt`. So the first round after any fetch writes: an app start's
+  fetch, the half-TTL refresh, and every device in the cycle after a config
+  change. With every round writing, 150/s was clean, 180/s broke, and
+  throughput under overload was ~120–140/s. That is a knee of **150–180
+  rounds/s (≈ 45 000–54 000 devices)**.
 - **Registration** (a device's first round) saturates at **~50 new devices/s**.
 
 Config fetches are light: 2 000 full fetches/s (p95 3 ms, a new TLS connection
-each) and 500 narrowed fetches/s that each miss the signature cache (p95 4 ms,
-1.1 cores) passed without errors.
+and a fresh signature each) and 500 narrowed fetches/s that each miss the
+narrowed cache (p95 4 ms, 1.1 cores) passed without errors.
+
+Smoke run first (20 devices, 30 s, 2 rounds/s): 60/60 rounds `pass` with a
+token, twice (a fresh database, then a restart with the config preloaded).
 
 Raw data: `results/*.jsonl` (one summary line per run) and
 `results/*.server.csv` (server CPU % and RSS every 2 s). Tables made with
@@ -83,19 +91,26 @@ only shortens the overloaded tail a little.
 | 300 | 299.8 | 6.41 | 8.41 | 15.92 | 0 % | 1.20 / 1.48 | 632 |
 | **400** | 306.9 | 12 689 | **13 566** | 13 812 | 16.6 % (generator in-flight cap) | 1.51 / 2.00 | 776 |
 
-With 2 call threads instead of 28 the server does **better**: it is clean at
-300/s and peaks at ~307/s. Fewer threads competing for the same SQLite lock
+With the thread pools sized for 2 processors instead of 28, the server does
+**better**: it is clean at 300/s and peaks at ~307/s. (How many call threads
+Ktor made was not checked.) Fewer threads competing for the same SQLite lock
 and the same monitor waste less time. That confirms the knee is contention,
 not capacity. (This flag sizes the thread pools; it does not cap CPU. The
 server here used up to 2 cores.)
 
-## After a config change: every round writes its watermark (knee 100–200/s)
+## When every round writes its watermark (knee 150–180/s)
 
-The first ramp ran on devices that had no stored watermark. That is what
-every device looks like in the cycle after a config change: the next round
-embeds the new config, and the round after that reports a higher
-`currentIssuedAt` and writes it (`recordConfigWatermark`). That is a second
-write transaction per round.
+In the first ramp every round reported a newer `currentIssuedAt` than the
+server had on record, so every round also wrote it (`recordConfigWatermark`):
+a second write transaction per round. (The generator preloaded the envelope
+the server served at the start of each run. With the signature cache off,
+the default with a local key, every fetch is signed anew with a new
+`issuedAt`.) In the field this is the first round after any fetch of a new
+envelope: after an app start that fetches the config, after the half-TTL
+refresh (12 h with the default 24 h TTL), and for every device in the cycle
+after a config change (that round embeds the new config, and the next one
+reports it). How often a real device fetches was not measured; it decides
+what share of rounds pays this second write.
 
 | offered/s | devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max | RSS max MB |
 |---|---|---|---|---|---|---|---|---|
@@ -107,17 +122,17 @@ write transaction per round.
 | 180 (separate run) | 54000 | 121.6 | 20 103 | 40 436 | – | 7.1 % | – | – |
 | **200** | 60000 | 129.5 | 27 558 | **39 485** | 45 122 | 23.6 % (generator in-flight cap 7474, timeouts 75) | 0.79 / 1.83 | 862 |
 
-Peak throughput here is about 140/s, and the server uses under one core.
+Throughput under overload was about 120–140/s (150/s was clean in one 90 s
+run, 180/s broke), and the server used under one core.
 Under overload, challenges (which never touch the database) also wait
 seconds: the 28 call threads are all busy in `POST /api/v1/attest`. Three
-`SQLITE_BUSY` errors reached the log as `500`. The 150/s run was clean only
-because it sat just under the peak.
+`SQLITE_BUSY` errors reached the log as `500`.
 
 **What this means in practice:** a fleet sized for the steady-state knee
 (say 200 rounds/s) overloads for about one attestation interval after every
-pin change, because every device writes its watermark in the same 5 minutes.
-The safe sizing is the after-change knee, **~130 rounds/s ≈ 40 000 devices
-per instance**, until the fixes below are in.
+pin change, because every device writes its watermark in the same few
+minutes. The safe sizing is below this knee, **~120–150 rounds/s ≈ 36 000–45 000
+devices per instance**, until the fixes below are in.
 
 (The high p50 at 10–25/s is the latency of an idle machine: CPU frequency
 and power states, cold caches. It falls as load rises.)
@@ -128,8 +143,8 @@ and power states, cold caches. It falls as load rises.)
 registered successfully on average, 45–50/s at best**, p95 39 s, 79 % of
 the offered rounds failed (generator in-flight cap, client timeouts, one
 `500` `SQLITE_BUSY`). The server used 0.6 cores on average. A registration
-writes three times (insert, audit entry, verdict) and runs a `COUNT` of the
-Config API's devices (`ATTESTATION_DEVICE_LIMIT`). For comparison,
+writes four times (insert, audit entry, verdict, watermark) and runs a `COUNT`
+of the Config API's devices (`ATTESTATION_DEVICE_LIMIT`). For comparison,
 `seed`, one uncontended writer through the same store, registered
 **~1 140 devices/s** (145 182 in 128 s). The disk is not the limit; contention
 is. Onboarding 100 000 devices at once (a new customer, an app update that
@@ -179,9 +194,11 @@ Where the time goes is **waiting, not computing**:
   (rollback journal) and no `busy_timeout` is set, so readers and writers
   block each other and back off in SQLite's busy handler.
 - **Per round:** 4 reads (revocation, device row, policy, token keys) and 1
-  write transaction (verdict), plus 1 write for the watermark after a config
-  change. Each opens and closes its own connection.
-- **CPU** (only ~1.3 cores at 300/s; JFR execution samples by subsystem):
+  write transaction (verdict), plus 1 write for the watermark when the device reports a newer
+  config (after any fetch of a new envelope). Each opens and closes its own connection.
+- **CPU** (only ~1.3 cores at 300/s; JFR execution samples by subsystem. These
+  cover threads running Java code only: time in SQLite's native code and in
+  socket I/O is not in them):
   report ECDSA verification 42 %, TLS (handshakes, X25519, the certificate
   signature) 27 %, token ES256 signing and key loading 21 %, the per-device
   rate limiter's table scan 7 %, JSON 1 %. Nonces, policy evaluation and
@@ -204,9 +221,11 @@ Where the time goes is **waiting, not computing**:
 
 1. **Take the token signing key off the per-round path.** Keep the active
    signing key in memory and invalidate it on rotate and delete, the way
-   `verificationKeys()` already caches for a few seconds. Expected effect:
-   this removes the global monitor and one SQLite read from every round, and
-   the profile's top contention site goes away. It weakens nothing: the same
+   `verificationKeys()` already caches for a few seconds. This removes
+   the global monitor and one SQLite read from every round, so the profile's
+   top contention site goes away. How far the knee moves was not measured: the
+   thread holding that monitor is itself waiting on SQLite, so this alone may
+   mostly move the queue to the database. It weakens nothing: the same
    key signs, and a rotation still takes effect at once on this instance.
    Small, but it is key-handling code, so it should go through a review
    rather than land with the load test.
@@ -215,9 +234,10 @@ Where the time goes is **waiting, not computing**:
    With WAL, readers stop waiting on the writer; reused connections drop the
    per-call open and schema parse; one writer stops the busy-handler backoff.
    Evidence: one uncontended writer does ~1 140 transactions/s while the
-   contended server collapses at ~140–300 rounds/s, and 2 call threads beat
-   28. Of the two, this one matters most for the after-change and registration
-   knees.
+   contended server collapses at ~140–300 rounds/s, and pools sized for 2
+   processors beat 28. This is probably the larger lever, certainly for the
+   watermark-write and registration knees, but neither fix was tried here; the
+   two together are what the evidence points at.
 
 Also worth fixing, for correctness more than speed: the per-device limiter's
 10 000-key table. Size it to the device limit, or count devices that do not
@@ -254,7 +274,7 @@ rounds**. A hosted tenant behind a shared ingress must set `TRUSTED_PROXIES`
   transactions per round (1, or 2 after a config change, 3 plus a `COUNT`
   for a registration) let the result be translated.
 - **28 fast cores.** The knee here is contention, so more cores do not help
-  (2 call threads did better than 28). A small tenant would hit CPU at about
+  (pools sized for 2 processors did better than 28). A small tenant would hit CPU at about
   4–5 ms per round, so a 1-vCPU tenant would cap at a few hundred rounds/s,
   close to the same knee.
 - **`warn` without a chain.** Under `enforce`, registration also verifies a
