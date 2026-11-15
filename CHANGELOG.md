@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+Server and sample host only; the libraries are unchanged since 2.11.0.
+
+### Server
+
+- **One SQLite connection stays open (WAL).** In WAL mode, closing the last connection
+  checkpoints the whole WAL and deletes it. With a connection per store call and few
+  call threads (a container with 1–2 processors) that happened on nearly every request:
+  at 300 attestation rounds/s the server reached 264/s with p95 26 s. The server now
+  holds one connection for the life of the process and closes it at shutdown (one
+  checkpoint, so a cleanly stopped server leaves the database in the main file). Same
+  load after the change: p95 7 ms. Results: `demo-server/loadtest/RESULTS.md`.
+
+### Sample host
+
+- **Production profile: `/tmp` is mounted `exec`.** Docker adds `noexec` to a tmpfs
+  unless `exec` is written; SQLite then cannot load its native library ("failed to map
+  segment") and the server does not start under `docker-compose.production.yml`.
+- **`smoke-test.sh` with the production profile.** With `CONFIG_API_ADMIN_ROUTES=off`
+  a Config API port answers `403 admin_routes_disabled` to everything but device
+  routes, key or no key; the test expected 401/404. Admin keys from `ADMIN_KEYS` and
+  `ADMIN_KEYS_FILE` are read as separate lines.
+
 ## 2.11.0 — 2026-11-15 — review 2026-11-14: what an approver sees is what runs (query strings), TLS only on pinned clients, redirects on WebSockets and from a cache, vault version floor, bridges take more from the native file
 
 ### Server

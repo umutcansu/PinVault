@@ -140,10 +140,11 @@ services:
       - SETGID
     # Kök dosya sistemi salt okunur; yazılan tek yerler /data (kalıcı veri) ve
     # bellekteki /tmp (JVM geçici dosyaları; SQLite sürücüsü yerel kitaplığını buradan
-    # yüklediği için noexec konmaz).
+    # yüklediği için noexec konmaz). Docker tmpfs'e "exec" yazılmazsa kendiliğinden
+    # noexec ekler; o zaman SQLite yüklenemez ("failed to map segment") ve sunucu açılmaz.
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=128m
+      - /tmp:rw,exec,nosuid,nodev,size=128m
     # Kaynak sınırları: sunucu kimlik doğrulamasız isteklerle makineyi tüketemesin.
     mem_limit: ${HOST_MEMORY_LIMIT:-1g}
     pids_limit: ${HOST_PIDS_LIMIT:-512}

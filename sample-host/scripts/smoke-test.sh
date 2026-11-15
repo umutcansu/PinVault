@@ -142,17 +142,25 @@ else
 fi
 
 echo "[4] Yetki"
-expect_status 401 "PUT  config (anahtarsız, Config API)" \
+# Config API portlarında yönetim uçları kapalıysa (CONFIG_API_ADMIN_ROUTES=off; üretim
+# profili sabitler) sunucu cihaz uçları dışındaki her isteği anahtara bakmadan 403
+# admin_routes_disabled ile reddeder (DeviceOnlyRoutes); açıksa anahtarsız istek 401 alır.
+if is_production || [ "${CONFIG_API_ADMIN_ROUTES:-on}" = off ]; then
+    CFG_NO_KEY=403 CFG_VAULT_WITH_KEY=403 CFG_ROUTES="Config API: yalnızca cihaz uçları"
+else
+    CFG_NO_KEY=401 CFG_VAULT_WITH_KEY=404 CFG_ROUTES="Config API: yönetim yok"
+fi
+expect_status "${CFG_NO_KEY}" "PUT  config (anahtarsız, Config API)" \
     -X PUT -H 'Content-Type: application/json' -d '{}' "${HTTPS}/api/v1/certificate-config"
-expect_status 401 "GET  certificate-config/history (anahtarsız)" "${HTTPS}/api/v1/certificate-config/history/x"
+expect_status "${CFG_NO_KEY}" "GET  certificate-config/history (anahtarsız)" "${HTTPS}/api/v1/certificate-config/history/x"
 # Vault yönetimi (yükleme, silme, dağıtım listesi, token'lar) yalnızca yönetim
 # portunda ve Config API kapsamıyla: /api/v1/config-apis/<kimlik>/vault/…
 VAULT_ADMIN="${HTTP}/api/v1/config-apis/default-tls/vault/distributions"
 expect_status 401 "GET  vault/distributions (anahtarsız, yönetim portu)" "${VAULT_ADMIN}"
 if [ -n "${KEY}" ]; then
     expect_status_with_key 200 "GET  vault/distributions (anahtarla, yönetim portu)" "${VAULT_ADMIN}"
-    # Config API portunda vault yönetimi hiç yok: anahtarla da 404.
-    expect_status_with_key 404 "GET  vault/distributions (anahtarla, Config API: yönetim yok)" "${HTTPS}/api/v1/vault/distributions"
+    # Config API portunda vault yönetimi hiç yok: anahtarla da 404 (yönetim uçları kapalıyken 403).
+    expect_status_with_key "${CFG_VAULT_WITH_KEY}" "GET  vault/distributions (anahtarla, ${CFG_ROUTES})" "${HTTPS}/api/v1/vault/distributions"
 else
     bad "API_KEY .env'de yok; anahtarlı kontrol atlandı"
 fi
@@ -230,7 +238,7 @@ if is_production; then
         [ "${name}" != ATTESTATION_REQUIRE_VERIFIED_BOOT ] || [ -n "${got}" ] || got=true
         if [ "${got}" = "${want}" ]; then ok "üretim: ${name}=${want}"; else bad "üretim: ${name}='${got}' (beklenen ${want})"; fi
     done
-    admins="$( { container_env ADMIN_KEYS | tr ',' '\n'; f="$(container_env ADMIN_KEYS_FILE)"; [ -z "${f}" ] || docker compose exec -T pinvault-host cat "${f}" 2>/dev/null; } \
+    admins="$( { container_env ADMIN_KEYS | tr ',' '\n'; echo; f="$(container_env ADMIN_KEYS_FILE)"; [ -z "${f}" ] || docker compose exec -T pinvault-host cat "${f}" 2>/dev/null; } \
         | sed -e 's/^[[:space:]]*//' -e '/^#/d' -e '/^$/d' | wc -l | tr -d ' ')"
     if [ "${admins}" -ge 2 ]; then ok "üretim: ${admins} kişisel yönetici (iki kişi onayı)"; else bad "üretim: ${admins} kişisel yönetici; en az 2 gerekir (ADMIN_KEYS)"; fi
     if [ -n "$(container_env RECOVERY_PUBLIC_KEYS | tr -d ' ,')" ]; then ok "üretim: kurtarma anahtarı (RECOVERY_PUBLIC_KEYS) dolu"; else bad "üretim: RECOVERY_PUBLIC_KEYS boş"; fi
