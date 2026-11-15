@@ -1,14 +1,159 @@
 # Load test results (2026-11-15)
 
-> **Status of the fixes (branch `claude/loadtest-attestation-651653`, local only).**
-> The numbers below are all **before** the fixes. Since then: the per-device
-> rate limiter never fails open (bounded LRU, O(1) expiry, sized from the
-> configured limits), the active token key is kept in memory, and SQLite runs
-> in WAL mode with `busy_timeout=5000` and `synchronous=NORMAL`
-> (`DB_JOURNAL_MODE`, default `wal`). **Not done yet:** re-measuring the
-> steady-state, watermark-write and registration ramps with these fixes
-> (waiting for the machine), and the optional items: pooled read connections
-> and a cheaper registration `COUNT`.
+## After the fixes (re-measured 2026-11-15)
+
+The fixes, made after the first measurement below:
+
+- Identity-keyed rate limits never let a request through uncounted; tables
+  are bounded and expire in O(1).
+- The active token key is kept in memory, not read from SQLite under a lock
+  on every round.
+- SQLite runs in WAL mode with `busy_timeout=5000` and `synchronous=NORMAL`.
+- One connection stays open for the life of the process, so the WAL is not
+  checkpointed and deleted every time the last per-call connection closes.
+
+The setup, the generator and the data are the same as before: 150 000
+registered devices, a TLS connection per round, open loop, 512 MB heap,
+steps of 90 s after 20 s of warm-up.
+
+| | before | after, 28 cores | after, pools for 2 processors |
+|---|---|---|---|
+| Steady state (the device's config unchanged) | knee 250–300/s (≈ 75 000–90 000 devices) | **clean at 800/s** (≈ 240 000 devices); the next limit is the nonce cache at ~833/s (≈ 250 000 devices) | **clean at 300/s, p95 0.32 s at 400/s**, breaks at 500/s (≈ 120 000 devices at 400/s) |
+| Every round also writes its watermark (the cycle after a config change) | knee 150–180/s (≈ 45 000–54 000 devices) | **clean at 800/s** | **clean at 300/s, p95 0.29 s at 400/s** |
+| Registration (a device's first round) | ~50 new devices/s | **clean at 800 new devices/s** | **clean at 200/s**, ~360/s at most |
+
+Device counts are rounds/s × 300 (the default 5-minute interval). The
+28-core runs were made before the kept connection was added (it changes
+nothing measurable with 28 call threads). The "pools for 2 processors" runs
+(`-XX:ActiveProcessorCount=2`) include it.
+
+### Steady state, 28 cores, 512 MB
+
+| offered/s | devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max (cores) | RSS max MB |
+|---|---|---|---|---|---|---|---|---|
+| 250 | 75000 | 249.9 | 7.82 | 10.0 | 12.42 | 0 % | 1.58 / 6.32 | 795 |
+| 300 | 90000 | 299.8 | 7.48 | 10.26 | 13.34 | 0 % | 1.57 / 1.84 | 804 |
+| 400 | 120000 | 399.7 | 7.7 | 14.04 | 48.1 | 0 % | 1.93 / 2.31 | 815 |
+| 500 | 150000 | 499.7 | 7.73 | 82.88 | 576.51 | 0 % | 2.27 / 5.28 | 832 |
+| 600 | 180000 | 599.8 | 7.32 | 28.94 | 147.07 | 0 % | 2.64 / 3.21 | 848 |
+| 800 | 240000 | 799.5 | 7.08 | 20.83 | 161.02 | 0 % | 3.62 / 5.98 | 870 |
+| 1000 | 250000 | 888.4 | 6.62 | 10.56 | 14.74 | **11.1 % `503 attestation_busy`** | 4.11 / 5.09 | 875 |
+
+At 1000/s the server answered fast (p95 11 ms) and refused 10 000 rounds
+with `503 attestation_busy`. The nonce replay cache was full: it holds
+100 000 nonces for the 120 s nonce lifetime, ≈ 833 rounds/s. That is a
+deliberate fail-closed bound (a nonce is never forgotten while it could
+still be presented), not a load problem. At 800/s the server used ~3.6 cores,
+so CPU becomes the next limit on a smaller machine. (The 400–500/s p99
+blips are single GC or checkpoint pauses; they do not repeat at 600–800/s.)
+
+### Every round writes its watermark, 28 cores, 512 MB
+
+Devices with no watermark on record and a freshly signed config: every round
+writes `recordConfigWatermark` as well as the verdict. Checked in the
+database: every device that attested had its watermark written.
+
+| offered/s | devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max | RSS max MB |
+|---|---|---|---|---|---|---|---|---|
+| 150 | 45000 | 149.9 | 8.96 | 11.02 | 12.65 | 0 % | 1.11 / 4.29 | 779 |
+| 200 | 60000 | 199.9 | 8.82 | 11.98 | 16.78 | 0 % | 1.25 / 1.52 | 786 |
+| 300 | 90000 | 299.8 | 9.13 | 21.33 | 74.43 | 0 % | 1.69 / 2.00 | 798 |
+| 400 | 120000 | 399.8 | 8.78 | 36.8 | 1 237 | 0 % | 2.02 / 3.50 | 810 |
+| 600 | 180000 | 599.7 | 7.92 | 29.28 | 162.94 | 0 % | 2.94 / 3.50 | 828 |
+| 800 | 240000 | 799.5 | 7.4 | 26.35 | 394.24 | 0 % | 3.77 / 4.53 | 850 |
+
+### Registration, 28 cores, 512 MB (a fresh database, every device new)
+
+| offered/s | new devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max |
+|---|---|---|---|---|---|---|---|
+| 100 | 6000 | 99.9 | 11.82 | 16.74 | 71.3 | 0 % | 1.06 / 3.42 |
+| 200 | 12000 | 199.8 | 11.48 | 21.63 | 185.22 | 0 % | 1.43 / 1.93 |
+| 400 | 24000 | 399.6 | 12.2 | 1 883 | 3 281 | 0 % | 2.45 / 5.26 |
+| 400 (again) | 24000 | 399.6 | 10.13 | 18.61 | 31.94 | 0 % | – |
+| 800 | 48000 | 798.5 | 9.22 | 31.71 | 81.22 | 0 % | 4.52 / 5.18 |
+
+The first 400/s step had one 746 ms young-GC pause in the middle (G1, 512 MB
+heap, a registration writes more garbage than a round); the same step again
+was clean. 100 000 new devices register in a little over 2 minutes at 800/s,
+against more than half an hour before.
+
+### Thread pools sized for 2 processors, 512 MB (`-XX:ActiveProcessorCount=2`)
+
+Steady state:
+
+| offered/s | devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max | RSS max MB |
+|---|---|---|---|---|---|---|---|---|
+| 200 | 60000 | 199.9 | 6.2 | 7.58 | 12.39 | 0 % | 0.99 / 3.00 | 615 |
+| 300 | 90000 | 299.8 | 5.82 | 7.24 | 13.71 | 0 % | 1.22 / 1.70 | 624 |
+| 400 | 120000 | 399.6 | 5.74 | 318.72 | 347.14 | 0 % | 1.53 / 1.98 | 636 |
+| **500** | 150000 | 499.1 | 2 019 | **4 293** | 4 903 | 0 % | 2.11 / 2.78 | 780 |
+
+Every round writes its watermark:
+
+| offered/s | devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max | RSS max MB |
+|---|---|---|---|---|---|---|---|---|
+| 200 | 60000 | 199.9 | 6.32 | 8.0 | 8.9 | 0 % | 1.05 / 3.07 | 600 |
+| 300 | 90000 | 299.8 | 6.12 | 7.61 | 11.06 | 0 % | 1.25 / 1.56 | 609 |
+| 400 | 120000 | 398.8 | 70.91 | 286.98 | 364.8 | 0 % | 1.57 / 1.87 | 630 |
+
+Registration:
+
+| offered/s | new devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max |
+|---|---|---|---|---|---|---|---|
+| 200 | 12000 | 199.8 | 7.58 | 9.61 | 25.94 | 0 % | 1.35 / 3.35 |
+| **400** | 24000 | 360.4 | 5 415 | **11 960** | 12 526 | 0 % | 1.87 / 2.68 |
+
+**Why the kept connection matters here.** Before it was added, the same
+2-processor server did *worse* than before the fixes: 200/s clean, but 300/s
+reached only 264/s with p95 26 s. The JFR profile showed no lock contention
+and only crypto and TLS in Java code. The cost was in SQLite's native
+`close` and `prepare`: with 2 call threads the number of open connections
+often fell to zero, and in WAL mode the close of the last connection
+checkpoints the whole WAL into the database file and deletes it, on nearly
+every request. With one connection held open for the process
+(`DatabaseManager(keepOpen = true)` in `Main`; closed at JVM shutdown, which
+checkpoints once), 300/s is clean again with p95 7 ms.
+
+### What a server instance with 512 MB heap and 1–2 vCPU should be sized for
+
+- **CPU is the limit on a small instance.** The server spends about 4–5 ms
+  of CPU per round, including two TLS handshakes (a new connection per
+  round, as phones re-attest after their pooled connection is gone). At
+  400 rounds/s it used 1.5–2 cores. `-XX:ActiveProcessorCount=2` only sizes
+  the thread pools; a real 2-vCPU cap reaches its CPU limit about there.
+- **2 vCPU:** plan for **~300 rounds/s ≈ 90 000 devices** at the 5-minute
+  interval. That rate is clean (p95 under 10 ms) in both the steady state and
+  the after-change cycle, and leaves room for the burst after a pin change.
+  Registration bursts: ~200 new devices/s sustained.
+- **1 vCPU:** plan for about half of that, **~150 rounds/s ≈ 45 000
+  devices**. Not measured with a real 1-vCPU cap; this is the CPU per round
+  scaled.
+- **Memory:** 512 MB heap is enough (live data after a young GC 100–260 MB,
+  no full GC). RSS was 600–870 MB, so the container's memory limit needs
+  about **1 GB**.
+- **Settings:**
+  - `-XX:ActiveProcessorCount` equal to the vCPUs.
+  - `DB_JOURNAL_MODE=wal` (the default) on a local disk, never a network
+    filesystem.
+  - `ATTESTATION_DEVICE_LIMIT` set to the expected fleet: it also sizes the
+    per-device rate-limit table.
+  - `TRUSTED_PROXIES` for the proxy in front, with `TRUSTED_PROXIES_LISTENERS`
+    naming only the listeners behind it (usually `config-api`). Without them
+    the per-address limits count the whole fleet as one address.
+  - Back up the whole `data/db` directory, or with `sqlite3 .backup` while
+    the server runs.
+- **Re-measure on the target host.** This machine's `fsync` does not flush
+  the drive (macOS), and the instance shared a 28-core machine with the
+  generator. With WAL and `synchronous=NORMAL` there are far fewer syncs than
+  before, but slow network storage would still lower the numbers.
+
+Raw data for these runs: `results/a512*`, `w512*`, `g512*` (28 cores),
+`k2*`, `w2*`, `g2*` (pools for 2 processors, kept connection), `t2*` (pools
+for 2 processors, before the kept connection).
+
+---
+
+## Before the fixes (first measurement)
 
 **One server instance sustains about 250 attestation rounds/s with p95 under
 10 ms. It breaks between 250 and 300 rounds/s; at the default 5-minute
@@ -39,7 +184,7 @@ Raw data: `results/*.jsonl` (one summary line per run) and
 `results/*.server.csv` (server CPU % and RSS every 2 s). Tables made with
 `perl loadtest/table.pl loadtest/results <label>`.
 
-## Setup
+### Setup
 
 - Machine: Apple M3 Ultra (28 cores, 256 GB), macOS, JBR 17.0.14. The server
   and the generator run on the same machine and talk over loopback. Other
@@ -63,7 +208,7 @@ Raw data: `results/*.jsonl` (one summary line per run) and
   `currentIssuedAt` it sends (`--config-issued-at`). That is a fleet whose
   config has not changed since the devices' last rounds.
 
-## Steady state, 512 MB heap (knee 250–300/s)
+### Steady state, 512 MB heap (knee 250–300/s)
 
 | offered/s | devices | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max (cores) | RSS max MB |
 |---|---|---|---|---|---|---|---|---|
@@ -78,7 +223,7 @@ behind again. A second 300/s run with JFR on managed 293/s with p95 1.7 s.
 The generator stayed under 0.8 cores and at most 17 ms behind its schedule:
 the generator was not the limit.
 
-## Heap: 2 GB instead of 512 MB (no change in the knee)
+### Heap: 2 GB instead of 512 MB (no change in the knee)
 
 | offered/s | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg (cores) | RSS max MB |
 |---|---|---|---|---|---|---|---|
@@ -93,7 +238,7 @@ in all, max 7 ms). RSS goes from ~0.78 GB to ~1.75 GB for the same
 throughput: **512 MB is enough for one instance at this load**. The larger heap
 only shortens the overloaded tail a little.
 
-## Smaller thread pools: `-XX:ActiveProcessorCount=2`, 512 MB (knee 300–400/s)
+### Smaller thread pools: `-XX:ActiveProcessorCount=2`, 512 MB (knee 300–400/s)
 
 | offered/s | ok/s | p50 ms | p95 ms | p99 ms | errors | server CPU avg / max | RSS max MB |
 |---|---|---|---|---|---|---|---|
@@ -108,7 +253,7 @@ and the same monitor waste less time. That confirms the knee is contention,
 not capacity. (This flag sizes the thread pools; it does not cap CPU. The
 server here used up to 2 cores.)
 
-## When every round writes its watermark (knee 150–180/s)
+### When every round writes its watermark (knee 150–180/s)
 
 In the first ramp every round reported a newer `currentIssuedAt` than the
 server had on record, so every round also wrote it (`recordConfigWatermark`):
@@ -147,7 +292,7 @@ devices per instance**, until the fixes below are in.
 (The high p50 at 10–25/s is the latency of an idle machine: CPU frequency
 and power states, cold caches. It falls as load rises.)
 
-## Registration: ~50 new devices/s
+### Registration: ~50 new devices/s
 
 200 new devices/s offered (fresh database, 12 000 new ids): **28.5/s
 registered successfully on average, 45–50/s at best**, p95 39 s, 79 % of
@@ -161,7 +306,7 @@ is. Onboarding 100 000 devices at once (a new customer, an app update that
 loses keys) takes more than half an hour, and the instance is saturated for
 that whole time.
 
-## Config fetches (2 GB server, 60 s each, a TLS connection per request)
+### Config fetches (2 GB server, 60 s each, a TLS connection per request)
 
 | mix | offered/s | ok/s | p50 ms | p95 ms | p99 ms | server CPU avg |
 |---|---|---|---|---|---|---|
@@ -184,7 +329,7 @@ Pooled keep-alive connections (no handshakes) at 300 attestation rounds/s:
 (p95 1.7–7.8 s), but already degrading: TLS costs CPU, the lock is what
 breaks.
 
-## Profile at the knee (JFR, 300/s steady state, and 180/s after a change)
+### Profile at the knee (JFR, 300/s steady state, and 180/s after a change)
 
 Where the time goes is **waiting, not computing**:
 
@@ -227,7 +372,7 @@ Where the time goes is **waiting, not computing**:
   pressure and no SQLite `locked` storm in the steady state (3 `SQLITE_BUSY`
   in all, all under overload).
 
-## What would move the knee most (not implemented)
+### What would move the knee most (at the time; both are now done, see the top)
 
 1. **Take the token signing key off the per-round path.** Keep the active
    signing key in memory and invalidate it on rotate and delete, the way
@@ -253,7 +398,7 @@ Also worth fixing, for correctness more than speed: the per-device limiter's
 10 000-key table. Size it to the device limit, or count devices that do not
 fit, so the limit actually holds for large fleets.
 
-## Default per-address limits in a real deployment
+### Default per-address limits in a real deployment
 
 Measured: with the default limits (`LIMITS=default`), 2 rounds/s from one
 address over 1 000 devices. **The first 60 rounds passed, the next 60 got
@@ -268,7 +413,7 @@ rounds**. A server behind a shared proxy must set `TRUSTED_PROXIES`
 (and the ingress must pass the client address). `CONFIG_VIEW_SIGN_RATE_LIMIT`
 (120 narrowed signings per address per 10 minutes) behaves the same way.
 
-## How representative this is
+### How representative this is
 
 - **One machine, one generator process, loopback.** There is no network
   latency and no loss. A real network adds round-trip time per handshake;
