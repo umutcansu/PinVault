@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.11.0) — review 2026-11-14: what an approver sees is what runs (query strings), TLS only on pinned clients, redirects on WebSockets and from a cache, vault version floor, bridges take more from the native file
+## 2.11.0 — 2026-11-15 — review 2026-11-14: what an approver sees is what runs (query strings), TLS only on pinned clients, redirects on WebSockets and from a cache, vault version floor, bridges take more from the native file
 
 ### Server
 

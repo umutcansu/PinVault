@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.10.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.11.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,7 +38,17 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.10.0** — four more approval cards go stale when what
+> **Latest release: 2.11.0** — fixes from a full security review: an
+> approval card's scope is now the scope that is written, pinned clients send
+> over TLS only and keep the app's headers on WebSocket and cached redirects,
+> vault files keep a version floor, iOS refuses a block without a signing key,
+> per-device rate limits no longer stop counting above 10 000 devices, and the
+> server runs SQLite in WAL mode. React Native / Flutter release builds take a
+> vault file's keys only from the native file and run every Config API it
+> declares. Breaking changes: see [MIGRATION.md](MIGRATION.md).
+> See [CHANGELOG.md](CHANGELOG.md).
+>
+> **2.10.0** — four more approval cards go stale when what
 > they act on moved in between, signing-key sets must name their Config APIs
 > (`ALLOW_UNSCOPED_KEY_SETS` for the old behaviour), vault content at rest is
 > bound to its file, a re-enrolled device can attest again, and on Android a
@@ -130,7 +140,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.10.0")
+    implementation("io.github.umutcansu:pinvault:2.11.0")
 }
 ```
 
@@ -143,7 +153,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.10.0")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.11.0")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

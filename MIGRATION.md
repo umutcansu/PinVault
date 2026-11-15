@@ -4,7 +4,7 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
-## Upgrading from 2.10.0 to 2.11.0 (unreleased)
+## Upgrading from 2.10.0 to 2.11.0
 
 Fixes from the 2026-11-14 security review. Four things can stop an app or a
 server that worked on 2.10.0.
