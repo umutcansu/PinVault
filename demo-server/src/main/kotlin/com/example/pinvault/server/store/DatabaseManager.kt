@@ -41,7 +41,7 @@ class DatabaseManager(
      * WAL only: keep one connection open for the life of the process (the server's
      * own database; tests leave it off). When the last connection to a WAL database
      * closes, SQLite checkpoints the whole WAL into the main file and deletes it;
-     * with a connection per store call and few threads (a small tenant) that
+     * with a connection per store call and few threads (a small instance) that
      * happened on nearly every request (load test 2026-11-15). The connection is
      * closed at JVM shutdown, which checkpoints once, so a cleanly stopped
      * server leaves the database in the main file.
