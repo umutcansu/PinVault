@@ -410,10 +410,11 @@ class AttestationService(
         var token: String? = null
         var tokenExpiresAt: Long? = null
         if (passed) {
-            val secret = secrets.active()
+            // The active key from memory: no database read and no lock per token.
+            val signingKey = secrets.activeSigningKey()
             val nowSeconds = now.epochSecond
             // cnf: the key that signed this report and, over mTLS, the certificate it came with (§5).
-            token = PinVaultToken.issue(secret.signingKey(), deviceId, configApiId, arc, policy.version,
+            token = PinVaultToken.issue(signingKey, deviceId, configApiId, arc, policy.version,
                 policy.tokenTtlSeconds, device.annotations, nowSeconds,
                 keyThumbprint = PinVaultToken.jwkThumbprint(publicKey as ECPublicKey),
                 certThumbprint = clientCertificate?.let { PinVaultToken.certThumbprint(it) })

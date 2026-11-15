@@ -81,4 +81,38 @@ class AttestationTokenSecretStoreTest {
         assertContentEquals(made.secret, AttestationTokenSecretStore(db, VaultAtRestCipher("right-password")).active().secret)
         assertFailsWith<IllegalStateException> { plain.checkReadable() }
     }
+
+    @Test
+    fun `the active key is read from the database once, not on every token`() {
+        val store = AttestationTokenSecretStore(db, VaultAtRestCipher("pw"))
+        val first = store.active()
+        val signer = store.activeSigningKey()
+        assertEquals(first.kid, signer.kid)
+        // The database is gone: a store that read it per call would fail now.
+        db.connection().use { conn -> conn.createStatement().use { it.executeUpdate("DROP TABLE attestation_token_secrets") } }
+        repeat(1_000) { assertEquals(first.kid, store.active().kid) }
+        kotlin.test.assertSame(signer, store.activeSigningKey(), "parsed once per key")
+    }
+
+    @Test
+    fun `a rotation or a deletion takes effect at once in the same process`() {
+        val store = AttestationTokenSecretStore(db, VaultAtRestCipher("pw"))
+        val first = store.active()
+        val second = store.rotate("admin")
+        assertEquals(second.kid, store.active().kid, "the new key signs from the next token on")
+        assertEquals(second.kid, store.activeSigningKey().kid)
+        assertEquals(setOf(first.kid, second.kid), store.verificationKeys().keys, "the old one still verifies")
+        assertEquals(AttestationTokenSecretStore.Deletion.Deleted, store.delete(first.kid))
+        assertEquals(setOf(second.kid), store.verificationKeys().keys)
+        assertEquals(second.kid, store.active().kid)
+        // Many threads asking while another rotates: each gets a whole key, and the newest once the rotation is done.
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(16)
+        val seen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val tasks = (0 until 2_000).map { pool.submit { seen.add(store.activeSigningKey().kid) } }
+        val third = store.rotate("admin")
+        tasks.forEach { it.get() }
+        pool.shutdown()
+        assertTrue(seen.all { it == second.kid || it == third.kid }, "$seen")
+        assertEquals(third.kid, store.active().kid)
+    }
 }

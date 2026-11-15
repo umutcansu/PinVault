@@ -66,6 +66,18 @@ class AttestationTokenSecretStore(
 
     private val random = SecureRandom()
 
+    /**
+     * The active key and what signs with it, kept in memory: every passing
+     * attestation round signs a token, and reading the keys from SQLite (and
+     * parsing the private key) under this object's lock on every round was the
+     * server's top point of contention (load test 2026-11-15). This store is
+     * the only writer of the table, so every write here ([rotate], [delete],
+     * [checkReadable]) drops it; null = load it on the next [active].
+     */
+    @Volatile private var activeCache: ActiveKey? = null
+
+    private class ActiveKey(val secret: TokenSecret, val signingKey: PinVaultToken.SigningKey)
+
     /** Verification keys by kid, refreshed every few seconds: the mock hosts verify a token per request. */
     @Volatile private var cached: Pair<Long, Map<String, PinVaultToken.VerificationKey>>? = null
 
@@ -94,9 +106,24 @@ class AttestationTokenSecretStore(
      * one has another algorithm than [alg] (a server moved to ES256): the old
      * key stays for verification until it is deleted.
      */
+    fun active(): TokenSecret = activeKey().secret
+
+    /** What signs tokens with the active key (parsed once per key, not once per token). */
+    fun activeSigningKey(): PinVaultToken.SigningKey = activeKey().signingKey
+
+    private fun activeKey(): ActiveKey {
+        // The hot path: no lock, no database.
+        activeCache?.let { return it }
+        return loadActive()
+    }
+
     @Synchronized
-    fun active(): TokenSecret = all().firstOrNull { it.active }?.takeIf { it.alg == alg }
-        ?: rotate(if (all().any { it.active }) "system (PINVAULT_TOKEN_ALG=$alg)" else "system")
+    private fun loadActive(): ActiveKey {
+        activeCache?.let { return it }
+        val secret = all().firstOrNull { it.active }?.takeIf { it.alg == alg }
+            ?: rotate(if (all().any { it.active }) "system (PINVAULT_TOKEN_ALG=$alg)" else "system")
+        return ActiveKey(secret, secret.signingKey()).also { activeCache = it }
+    }
 
     /** Every key by kid, for verification (a few seconds stale at most). */
     fun verificationKeys(): Map<String, PinVaultToken.VerificationKey> {
@@ -143,6 +170,7 @@ class AttestationTokenSecretStore(
             }
             conn.commit()
             cached = null
+            activeCache = null
             TokenSecret(kid, secret, true, now.toString(), createdBy, alg, publicKey)
         } catch (e: Exception) {
             runCatching { conn.rollback() }
@@ -166,7 +194,7 @@ class AttestationTokenSecretStore(
             true -> Deletion.Active
             false -> conn.prepareStatement("DELETE FROM attestation_token_secrets WHERE kid = ? AND active = 0").use { stmt ->
                 stmt.setString(1, kid)
-                if (stmt.executeUpdate() > 0) { cached = null; Deletion.Deleted } else Deletion.NotFound
+                if (stmt.executeUpdate() > 0) { cached = null; activeCache = null; Deletion.Deleted } else Deletion.NotFound
             }
         }
     }
@@ -183,7 +211,7 @@ class AttestationTokenSecretStore(
      */
     @Synchronized
     fun checkReadable() {
-        if (cipher == null) { all(); return }
+        if (cipher == null) { all(); activeCache = null; return }
         db.connection().use { conn ->
             val rows = conn.prepareStatement("SELECT kid, secret FROM attestation_token_secrets").use { stmt ->
                 val rs = stmt.executeQuery()
@@ -207,6 +235,7 @@ class AttestationTokenSecretStore(
                 println("AttestationTokenSecretStore: secret $kid re-sealed under VAULT_AT_REST_PASSWORD")
             }
             cached = null
+            activeCache = null
         }
     }
 
