@@ -36,11 +36,13 @@ class ClientAddressTest {
 
     private val savedRules = TrustedProxies.rules
     private val savedHeader = TrustedProxies.header
+    private val savedListeners = TrustedProxies.listenerNames
 
     @AfterTest
     fun restore() {
         TrustedProxies.rules = savedRules
         TrustedProxies.header = savedHeader
+        TrustedProxies.listenerNames = savedListeners
     }
 
     private fun trust(vararg rules: String, header: String = "X-Forwarded-For") {
@@ -200,5 +202,58 @@ class ClientAddressTest {
         } finally {
             logger.detachAppender(appender)
         }
+    }
+
+    // ── TRUSTED_PROXIES_LISTENERS ───────────────────────────────────────────
+
+    /** What each listener reports as the client for a request forwarded by 127.0.0.1 for 203.0.113.7. */
+    private fun seenBy(vararg listeners: TrustedProxies.Listener): Map<TrustedProxies.Listener, String> =
+        listeners.associateWith { kind ->
+            var seen = ""
+            serve({
+                install(ClientAddress) { listener = kind }
+                routing { get("/who") { call.respondText(call.request.origin.remoteAddress) } }
+            }) { port -> seen = call(port, "GET", "/who", "X-Forwarded-For" to "203.0.113.7").second }
+            seen
+        }
+
+    private val every = TrustedProxies.Listener.entries.toTypedArray()
+
+    @Test
+    fun `by default every listener believes a trusted proxy`() {
+        trust("127.0.0.1")
+        TrustedProxies.listenerNames = emptyList()
+        assertEquals(every.associateWith { "203.0.113.7" }, seenBy(*every))
+        TrustedProxies.listenerNames = listOf("all")
+        assertEquals(every.associateWith { "203.0.113.7" }, seenBy(*every))
+    }
+
+    @Test
+    fun `a listener left out of TRUSTED_PROXIES_LISTENERS takes the socket peer, whatever the header says`() {
+        trust("127.0.0.1")
+        TrustedProxies.listenerNames = listOf("config-api")
+        assertEquals(mapOf(
+            TrustedProxies.Listener.MANAGEMENT to "127.0.0.1",
+            TrustedProxies.Listener.CONFIG_API to "203.0.113.7",
+            TrustedProxies.Listener.RECOVERY to "127.0.0.1"
+        ), seenBy(*every))
+        TrustedProxies.listenerNames = listOf("Management", " recovery ".trim())
+        assertEquals(mapOf(
+            TrustedProxies.Listener.MANAGEMENT to "203.0.113.7",
+            TrustedProxies.Listener.CONFIG_API to "127.0.0.1",
+            TrustedProxies.Listener.RECOVERY to "203.0.113.7"
+        ), seenBy(*every))
+    }
+
+    @Test
+    fun `a misspelt TRUSTED_PROXIES_LISTENERS stops the start`() {
+        trust("127.0.0.1")
+        TrustedProxies.listenerNames = TrustedProxies.parse("config-api, managment")
+        val e = assertFailsWith<IllegalArgumentException> { TrustedProxies.validate() }
+        assertTrue("managment" in e.message!!, e.message)
+        TrustedProxies.listenerNames = TrustedProxies.parse("all,recovery")
+        TrustedProxies.validate()
+        TrustedProxies.listenerNames = TrustedProxies.parse("config-api,management,recovery")
+        TrustedProxies.validate()
     }
 }

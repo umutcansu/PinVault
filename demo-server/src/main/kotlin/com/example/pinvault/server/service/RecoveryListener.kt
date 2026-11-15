@@ -66,7 +66,7 @@ class RecoveryListener(
         val keyStore = ServerKeyStores.load(certService.recoveryKeystoreFile(), CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val module: Application.() -> Unit = {
             install(com.example.pinvault.server.plugin.EncodedPathGuard)
-            install(com.example.pinvault.server.plugin.ClientAddress)
+            install(com.example.pinvault.server.plugin.ClientAddress) { listener = com.example.pinvault.server.plugin.TrustedProxies.Listener.RECOVERY }
             installRequestLog("recovery :$port")
             // Everything here is open to anyone; a renewal body is a CSR of a few hundred bytes.
             install(com.example.pinvault.server.plugin.ClientBodyLimit) { appliesTo = { _, _ -> true } }

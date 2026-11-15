@@ -90,7 +90,7 @@ class ConfigApiManager(
             // First: no plugin or route may see a path that hides a '/' in an escape.
             install(com.example.pinvault.server.plugin.EncodedPathGuard)
             // The device's own address behind a trusted proxy, before anything counts by address.
-            install(com.example.pinvault.server.plugin.ClientAddress)
+            install(com.example.pinvault.server.plugin.ClientAddress) { listener = com.example.pinvault.server.plugin.TrustedProxies.Listener.CONFIG_API }
             installRequestLog("$id :$port")
             install(ContentNegotiation) {
                 json(Json {

@@ -4,6 +4,23 @@
 
 ### Server
 
+- **`TRUSTED_PROXIES_LISTENERS` (defence in depth for hosted ingress).** `TRUSTED_PROXIES`
+  applied to every listener: a proxy trusted for the Config APIs also made the
+  management port and the recovery door take forwarded addresses from it.
+  `TRUSTED_PROXIES_LISTENERS` names the listeners that believe the header
+  (`management`, `config-api`, `recovery`, or `all`, the default, so nothing
+  changes for existing deployments); the others use the socket's peer. A
+  misspelt name stops the start.
+- **One instance carries a larger fleet (load test, `demo-server/loadtest/`).**
+  The per-device attestation limit silently stopped counting most devices of a
+  fleet over 10 000 (a full table let them through uncounted, after a scan of
+  the whole table under its lock); identity-keyed limits now drop the least
+  recently used key instead and count every request, address tables expire in
+  O(1), keys are bounded, and the report limiter no longer refuses every device
+  past 10 000. The active token key is kept in memory instead of read from
+  SQLite under a lock on every round. SQLite runs in WAL mode with
+  `busy_timeout=5000` (`DB_JOURNAL_MODE`, `DB_SYNCHRONOUS`): back up the whole
+  database directory, or with `sqlite3 .backup` while the server runs.
 - **A card's scope is the scope that is written (two-person approval).** The
   approval card read the query string with one parser and the handlers with
   another: on a real socket `PUT /api/v1/certificate-config?ConfigApiId=staging`

@@ -23,12 +23,22 @@ import io.ktor.server.plugins.mutableOriginConnectionPoint
  * stays the client). Loopback decisions (anonymous admin, approval replay)
  * keep reading the socket — see [ApiKeyAuth].
  *
- * Install it on every listener, right after [EncodedPathGuard] and before
- * anything that reads the client's address.
+ * `TRUSTED_PROXIES_LISTENERS` says which listeners believe the header at all:
+ * a comma list of `management`, `config-api`, `recovery`, or `all` (default).
+ * A listener left out takes the socket's peer as the client whatever the
+ * peer is, so a proxy in front of the Config APIs does not also let
+ * forwarded addresses into the management port (or the other way round).
+ *
+ * Install it on every listener, naming the listener ([ClientAddressConfig.listener]),
+ * right after [EncodedPathGuard] and before anything that reads the client's address.
  */
 object TrustedProxies {
     const val ENV = "TRUSTED_PROXIES"
     const val HEADER_ENV = "CLIENT_IP_HEADER"
+    const val LISTENERS_ENV = "TRUSTED_PROXIES_LISTENERS"
+
+    /** The listeners [LISTENERS_ENV] names. */
+    enum class Listener(val wire: String) { MANAGEMENT("management"), CONFIG_API("config-api"), RECOVERY("recovery") }
     private const val FORWARDED_FOR = "X-Forwarded-For"
     private val HEADER_NAME = Regex("^[A-Za-z0-9-]{1,64}$")
 
@@ -40,6 +50,25 @@ object TrustedProxies {
     @Volatile
     var header: String = ServerEnv.get(HEADER_ENV)?.trim()?.takeIf { it.isNotEmpty() } ?: FORWARDED_FOR
 
+    /** `TRUSTED_PROXIES_LISTENERS` as written; empty = `all`. */
+    @Volatile
+    var listenerNames: List<String> = parse(ServerEnv.get(LISTENERS_ENV))
+        set(value) { field = value; listeners = listenersOf(value) }
+
+    /** The listeners that read the forwarding header (unknown names are left to [validate]). */
+    @Volatile
+    var listeners: Set<Listener> = listenersOf(listenerNames)
+        private set
+
+    private fun listenersOf(names: List<String>): Set<Listener> {
+        val lower = names.map { it.lowercase() }
+        if (lower.isEmpty() || "all" in lower) return Listener.entries.toSet()
+        return Listener.entries.filter { it.wire in lower }.toSet()
+    }
+
+    /** Whether [listener] believes the forwarding header; null (a listener that names none: tests) = yes. */
+    fun appliesTo(listener: Listener?): Boolean = listener == null || listener in listeners
+
     fun parse(value: String?): List<String> =
         value.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
@@ -48,6 +77,9 @@ object TrustedProxies {
         val bad = rules.filterNot { PeerRules.valid(it) }
         require(bad.isEmpty()) { "$ENV: ${bad.joinToString()} is not an IP address or CIDR (e.g. 127.0.0.1 or 172.16.0.0/12)" }
         require(HEADER_NAME.matches(header)) { "$HEADER_ENV: '$header' is not a header name" }
+        val known = Listener.entries.map { it.wire } + "all"
+        val unknown = listenerNames.filterNot { it.lowercase() in known }
+        require(unknown.isEmpty()) { "$LISTENERS_ENV: ${unknown.joinToString()} is not a listener (management, config-api, recovery or all)" }
     }
 
     /** Whether [peer] (a socket address) is one of the trusted proxies. */
@@ -72,9 +104,15 @@ object TrustedProxies {
     }
 }
 
-val ClientAddress = createApplicationPlugin(name = "ClientAddress") {
+/** Which listener this is, for `TRUSTED_PROXIES_LISTENERS`. */
+class ClientAddressConfig {
+    var listener: TrustedProxies.Listener? = null
+}
+
+val ClientAddress = createApplicationPlugin(name = "ClientAddress", createConfiguration = ::ClientAddressConfig) {
+    val listener = pluginConfig.listener
     onCall { call ->
-        if (TrustedProxies.rules.isEmpty()) return@onCall
+        if (TrustedProxies.rules.isEmpty() || !TrustedProxies.appliesTo(listener)) return@onCall
         val peer = call.request.local.remoteAddress
         val client = TrustedProxies.clientAddress(peer, call.request.headers.getAll(TrustedProxies.header).orEmpty())
         if (client == peer) return@onCall

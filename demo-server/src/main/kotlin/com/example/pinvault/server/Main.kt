@@ -145,10 +145,11 @@ private fun startServer() {
     com.example.pinvault.server.service.StartupSecrets.check()?.let { System.err.println(it) }
     // After the passwords: a guessable shared key is refused too (ALLOW_DEMO_SECRETS for local runs).
     com.example.pinvault.server.service.AdminKeyStrength.check()?.let { System.err.println(it) }
-    // TRUSTED_PROXIES / CLIENT_IP_HEADER: a typo must stop the start, not trust nobody (or everybody).
+    // TRUSTED_PROXIES / CLIENT_IP_HEADER / TRUSTED_PROXIES_LISTENERS: a typo must stop the start, not trust nobody (or everybody).
     com.example.pinvault.server.plugin.TrustedProxies.validate()
     com.example.pinvault.server.plugin.TrustedProxies.rules.takeIf { it.isNotEmpty() }?.let {
-        println("Client addresses: ${com.example.pinvault.server.plugin.TrustedProxies.header} from TRUSTED_PROXIES ${it.joinToString()}")
+        println("Client addresses: ${com.example.pinvault.server.plugin.TrustedProxies.header} from TRUSTED_PROXIES ${it.joinToString()} " +
+            "on ${com.example.pinvault.server.plugin.TrustedProxies.listeners.joinToString { l -> l.wire }} (TRUSTED_PROXIES_LISTENERS)")
     }
     val dbPath = com.example.pinvault.server.service.ServerEnv.get("DB_PATH") ?: "pinvault.db"
     val db = DatabaseManager(dbPath)
@@ -1204,7 +1205,7 @@ private fun startServer() {
         install(com.example.pinvault.server.plugin.EncodedPathGuard)
         // The client's address behind a trusted proxy (TRUSTED_PROXIES), before
         // anything counts or records by address.
-        install(com.example.pinvault.server.plugin.ClientAddress)
+        install(com.example.pinvault.server.plugin.ClientAddress) { listener = com.example.pinvault.server.plugin.TrustedProxies.Listener.MANAGEMENT }
         // This server also listens on plain HTTP: the device endpoints that take a
         // token or hand out a key (the enrollment copy below) are served over TLS
         // only — MANAGEMENT_HTTPS_PORT, or a Config API port — or to this machine.
