@@ -47,6 +47,9 @@
   skipped the identifier check and started an API no later request could
   name. A malformed state reference on a card now makes it stale instead
   of never stale, and a request whose card cannot be read is not applied.
+- **`ADMIN_WRITES_FROZEN=true`** refuses every admin change (`423
+  admin_writes_frozen`) while admin reads and every device call go on: for a
+  lapsed hosted subscription or maintenance, without stopping the server.
 - **The key-set card says what is published**: version, a fingerprint per
   key, how many must sign, the Config APIs it is for (it said "v?").
 - Docs and compose: `demo-server/docker-compose.yml` passes every variable

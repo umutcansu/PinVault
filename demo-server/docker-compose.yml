@@ -161,6 +161,7 @@ services:
       - ADMIN_KEYS_FILE
       - APPROVAL_TTL_HOURS
       - PIN_LIVE_CHECK_ALLOW_OVERRIDE
+      - ADMIN_WRITES_FROZEN
       - LIVE_CHECK_TIMEOUT_MS
       # Device-side limits: certificates per client id, key replacements, pickup
       # polling, rows kept in the device list.

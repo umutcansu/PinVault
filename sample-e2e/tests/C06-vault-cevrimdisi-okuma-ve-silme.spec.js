@@ -3,9 +3,11 @@
 // İndirilen vault dosyası cihazda şifreli duruyor: host kapalıyken "Bilgi"
 // (PinVault.hasFile / fileVersion / loadFileAsString) içeriği sunucuya hiç
 // gitmeden veriyor, aynı anda "İndir" ağ hatasıyla düşüyor. "Sil"
-// (PinVault.clearFile) hem şifreli dosyayı hem Keystore anahtarını hem de
-// şifreli tercih kaydını kaldırıyor; dosya yeniden indirilince içerik tam
-// geliyor.
+// (PinVault.clearFile) şifreli dosyayı, Keystore anahtarını, içerik ve sürüm
+// kayıtlarını kaldırıyor; geride yalnızca dosyanın sürüm tabanı kalıyor
+// (2.11.0: silinen dosya, imzalı bile olsa daha eski bir sürümle geri
+// gelemesin diye en yeni doğrulanmış sürüm saklanır). Dosya yeniden
+// indirilince içerik tam geliyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
@@ -16,7 +18,7 @@ const MODEL = env.VAULT_KEYS.model;
 const FLAGS = env.VAULT_KEYS.flags;
 const ENC_FILE = `files/vault_files/${MODEL}.enc`;
 
-test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geride iz bırakmıyor', async ({
+test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geride içerik bırakmıyor; yalnızca sürüm tabanı kalıyor', async ({
   app,
   device,
   dashboard,
@@ -110,7 +112,7 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
       await attachText(testInfo, 'Silme sonrası "Bilgi"', [info, '', flagsInfo].join('\n'));
     });
 
-    await test.step('Cihaz: .enc dosyası ve SharedPreferences kaydı gerçekten silindi', async () => {
+    await test.step('Cihaz: .enc dosyası, içerik ve sürüm kayıtları silindi; yalnızca sürüm tabanı kaldı', async () => {
       const listing = device.appFiles(env.APP_ID, 'files/vault_files');
       // iOS kütüphanesi eski sürüm tablosunu hiç yazmayabilir: orada dosyanın yokluğu "kayıt yok" demek.
       const readStore = (file) => {
@@ -123,8 +125,13 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
       };
       const versions = readStore('shared_prefs/pinvault_vault_file_versions.xml');
       const prefs = readStore('shared_prefs/pinvault_secure_vault_files.xml');
-      // Hiçbir vault kaydı (içerik ya da sürüm) kalmamalı.
+      // İçerik ya da sürüm kaydı kalmamalı; kalan tek şey sürüm tabanı.
+      // Adlar anahtarlı hash, değerler şifreli: taban kayıt sayısıyla ayırt edilir.
+      // Android bütün tabanları tek kayıtta tutar (VaultFileMeta "version_floors");
+      // iOS dosya başına bir kayıt + ad listesi tutar (VaultFileMeta.swift): 2 dosya → 3.
       const dataNames = device.parsePrefs(prefs).filter((e) => e.type === 'string' && e.name).map((e) => e.name);
+      const floorEntries = device.platform === 'android' ? 1 : 2 + 1;
+      const leaked = [modelBody, flagsBody].filter((b) => prefs.includes(b) || versions.includes(b));
       await attachText(
         testInfo,
         device.appLabel(`adb shell run-as ${env.APP_ID} — silme sonrası depo`),
@@ -139,7 +146,15 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
           `sürüm kaydı duruyor mu: ${versions.includes(`vault_file_ver_${MODEL}`) ? 'EVET ✗' : 'hayır ✓'}`,
           device.appLabel('$ cat shared_prefs/pinvault_secure_vault_files.xml (kayıt adları)'),
           dataNames.length ? dataNames.map((n) => `  ${n}`).join('\n') : '  (kayıt yok)',
-          `veri kaydı kaldı mı: ${dataNames.length === 0 ? 'hayır ✓' : `EVET ✗ (${dataNames.length})`}`,
+          `kalan kayıt: ${dataNames.length} — ${
+            dataNames.length === floorEntries
+              ? `yalnızca sürüm tabanı ✓ (beklenen ${floorEntries})`
+              : `beklenen ${floorEntries} (yalnızca sürüm tabanı) ✗`
+          }`,
+          `dosya içeriği depoda düz metin geçiyor mu: ${leaked.length ? 'EVET ✗' : 'hayır ✓'}`,
+          '',
+          'Sürüm tabanı bilerek kalıyor: silinen dosya, eskiden imzalanmış daha eski',
+          'bir sürümle geri getirilemez. İçerik ve sürüm kayıtları gitti.',
           '',
           'clearFile ayrıca Android Keystore\'daki pinvault_vault_' + MODEL + ' anahtarını',
           'da siliyor — dosya bir yerden geri gelse bile çözülemez.',
@@ -147,7 +162,8 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
       );
       expect(listing).not.toContain(`${MODEL}.enc`);
       expect(versions).not.toContain(`vault_file_ver_${MODEL}`);
-      expect(dataNames).toHaveLength(0);
+      expect(dataNames).toHaveLength(floorEntries);
+      expect(leaked).toEqual([]);
 
       await app.backToMain();
       await app.openStorage();

@@ -166,6 +166,7 @@ services:
       # Canlı sertifika kontrolü: off | warn | enforce.
       PIN_LIVE_CHECK: ${PIN_LIVE_CHECK:-}
       PIN_LIVE_CHECK_ALLOW_OVERRIDE: ${PIN_LIVE_CHECK_ALLOW_OVERRIDE:-}
+      ADMIN_WRITES_FROZEN: ${ADMIN_WRITES_FROZEN:-}  # true: yönetim değişiklikleri 423 ile reddedilir, cihazlar etkilenmez
       LIVE_CHECK_HOST_MAP: ${LIVE_CHECK_HOST_MAP:-}
       LIVE_CHECK_TIMEOUT_MS: ${LIVE_CHECK_TIMEOUT_MS:-}
       # Ekran kilidiyle açılan dosyaların anahtarı için donanım belgesi
