@@ -63,14 +63,14 @@ test('Vault at_rest: sunucu diskinde şifreli, ağ trafiğinde şifresiz, telefo
 
       // Blob satırı şifreli olsa da düz metin veritabanının başka bir yerinde
       // (WAL, serbest sayfa, eski sürüm) durabilir: bütün dosya taranıyor.
-      const fs = require('fs');
-      const dbBytes = fs.readFileSync(env.DB_FILE);
+      // Ana dosya ve WAL (-wal): yeni kayıtlar checkpoint'e kadar WAL'da durur.
+      const dbBytes = hostApi.databaseFileBytes(env.DB_FILE);
       const found = dbBytes.includes(Buffer.from(secret, 'utf8'));
       await attachText(
         testInfo,
         'Bütün veritabanı dosyası taraması',
         [
-          `$ (dosya) ${env.DB_FILE} — ${dbBytes.length} bayt`,
+          `$ (dosya) ${env.DB_FILE} (+ -wal) — ${dbBytes.length} bayt`,
           `"${secret}" metni dosyanın herhangi bir yerinde geçiyor mu: ${found ? 'EVET ✗' : 'hayır ✓'}`,
           '',
           'Yalnızca vault_files satırı değil, bütün veritabanı dosyası tarandı:',

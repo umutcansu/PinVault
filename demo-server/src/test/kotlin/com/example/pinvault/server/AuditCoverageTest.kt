@@ -165,6 +165,11 @@ class AuditCoverageTest {
             val before = h.auditStore.count()
             assertEquals(200, h.call("PUT", "$base/vault-enabled", ALICE, """{"enabled":false}""").status)
             assertEquals(200, h.call("PUT", "$base/default-host-acl", ALICE, """{"hostnames":["a.example.com","b.example.com"]}""").status)
+            // AdminAudit writes on ResponseSent, after the client has its answer: wait for the
+            // entries rather than race them (WAL readers do not wait for the writer), then count exactly.
+            val deadline = System.currentTimeMillis() + 5_000
+            while (h.auditStore.count() < before + 2 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+            Thread.sleep(100) // a false "changed" entry would land by now too
             assertEquals(before + 2, h.auditStore.count(), "two generic http entries, no false \"changed\"")
         }
     }

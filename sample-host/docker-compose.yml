@@ -52,6 +52,12 @@ services:
       MANAGEMENT_HTTPS_PORT: "8082"
       RECOVERY_PORT: "8083"
       DB_PATH: /data/db/pinvault.db
+      # SQLite günlük kipi: boş = wal (sunucu varsayılanı; veritabanı pinvault.db,
+      # pinvault.db-wal ve pinvault.db-shm'den oluşur). Veritabanını bu makinenin
+      # dışından (Mac'teki sqlite3 ile bind mount üzerinden, ağ diskinden) açan
+      # bir kurulumda delete: WAL'ın ortak belleği makine sınırını aşmaz. E2E
+      # koşusu bu yüzden delete ister.
+      DB_JOURNAL_MODE: ${DB_JOURNAL_MODE:-}
       CERTS_DIR: /data/certs
       SIGNING_KEY_PATH: /data/signing-key.pem
       # demo | production. Sunucu okumaz; entrypoint.sh üretim profilinde açılış

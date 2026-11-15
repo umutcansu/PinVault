@@ -68,6 +68,18 @@ Yerel PinVault kaynağından derlemek için `.env`'e ekle:
 PINVAULT_SERVER_SRC=../demo-server
 ```
 
+E2E koşusu için `.env`'e şunu da ekle:
+
+```
+DB_JOURNAL_MODE=delete
+```
+
+Testler sunucunun veritabanını Mac'teki `sqlite3` ile bind mount üzerinden
+okur. Sunucunun varsayılan kipi WAL'dır; WAL'ın ortak belleği (`pinvault.db-shm`)
+Mac ile Docker'ın Linux VM'i arasında paylaşılmaz, bu yüzden okumalar eski ya da
+yarım veri görebilir. Taze test host'u (`lib/freshHost.js`) bunu kendi `.env`'ine
+kendisi yazar.
+
 `API_KEY` boşken compose başlamayı reddeder — sunucu anahtarsız (anonim)
 yönetimle asla açılmaz:
 

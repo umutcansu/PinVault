@@ -167,6 +167,9 @@ function configureEnv() {
     COMPOSE_PROJECT_NAME: PROJECT,
     HOST_CONTAINER_NAME: CONTAINER,
     PINVAULT_SERVER_SRC: serverSrc,
+    // Testler veritabanını Mac'teki sqlite3 ile bind mount üzerinden okur:
+    // WAL'ın ortak belleği (-shm) Mac ile Docker VM'i arasında paylaşılmaz.
+    DB_JOURNAL_MODE: 'delete',
     // Sertifikalar ilk açılışta bu parolayla üretilsin (sonradan değiştirmek
     // var olan JKS'leri açılamaz kılar).
     KEYSTORE_PASSWORD,

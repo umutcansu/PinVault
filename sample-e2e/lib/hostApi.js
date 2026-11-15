@@ -235,6 +235,17 @@ function dbQuery(sql, { mode = 'list' } = {}) {
   }).trim();
 }
 
+/**
+ * Veritabanının diskteki bütün baytları: `pinvault.db` ve (WAL kipinde) henüz
+ * ana dosyaya yazılmamış kayıtları tutan `pinvault.db-wal`. Ham bayt taraması
+ * (düz metin diskte var mı / yok mu) yalnızca ana dosyaya bakarsa WAL'daki
+ * yeni kayıtları görmez: "yok" sonucu boşuna geçer, "var" sonucu boşuna kalır.
+ */
+function databaseFileBytes(dbFile = env.DB_FILE) {
+  const parts = [dbFile, `${dbFile}-wal`].filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f));
+  return Buffer.concat(parts);
+}
+
 /** Vault dosyasının veritabanındaki HAM blob'u (Buffer) — at_rest kanıtı. */
 function vaultBlobFromDb(apiId, key) {
   const hex = dbQuery(
@@ -738,6 +749,7 @@ async function notifications(key) {
 
 module.exports = {
   api,
+  databaseFileBytes,
   forgetDeviceKeys,
   forgetAttestationDevice,
   isHealthy,

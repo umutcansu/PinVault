@@ -70,12 +70,13 @@ test('Kurulum: vault dosyaları metin ve dosya olarak, her politika ve şifrelem
     await test.step('Sunucu: at_rest dosya diskte şifreli, plain dosya şifresiz duruyor (K9)', async () => {
       // Sunucunun SQLite dosyası host'ta bind mount altında; ham baytlarda
       // aranır (container'da sqlite3 yok).
-      const db = fs.readFileSync(path.join(fresh.DIR, 'data/db/pinvault.db'));
+      // Ana dosya ve WAL (-wal): yeni kayıtlar checkpoint'e kadar WAL'da durur.
+      const db = require('../lib/hostApi').databaseFileBytes(path.join(fresh.DIR, 'data/db/pinvault.db'));
       const plainContent = `{"deneme":"${MATRIX[0].key}"}`;
       const atRestContent = `{"deneme":"${MATRIX[1].key}"}`;
       const has = (needle) => db.includes(Buffer.from(needle, 'utf8'));
       const lines = [
-        `veritabanı      : data/db/pinvault.db (${db.length} bayt)`,
+        `veritabanı      : data/db/pinvault.db (+ -wal) (${db.length} bayt)`,
         `"VLT-ENC2" öneki: ${has('VLT-ENC2') ? 'VAR (at_rest dosyası şifreli saklanıyor)' : 'YOK'}`,
         `plain içeriği   : ${has(plainContent) ? 'düz metin olarak bulundu' : 'bulunamadı'}  ← ${plainContent}`,
         `at_rest içeriği : ${has(atRestContent) ? 'düz metin olarak bulundu' : 'bulunamadı (şifreli)'}  ← ${atRestContent}`,
