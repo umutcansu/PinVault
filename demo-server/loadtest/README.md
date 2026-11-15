@@ -125,8 +125,8 @@ start a step while one is.
 ### `server.sh` knobs (environment)
 
 `DATA` (required), `HEAP` (`-Xms`/`-Xmx`, default `512m`), `CPUS`
-(`-XX:ActiveProcessorCount`: thread pools sized as on a small tenant; it does
-not cap CPU), `BASE_PORT` (7300), `LIMITS=raised|default`,
+(`-XX:ActiveProcessorCount`: thread pools sized as on a small instance;
+it does not cap CPU), `BASE_PORT` (7300), `LIMITS=raised|default`,
 `EXTRA_JAVA_OPTS` (JFR, async-profiler agent). GC log in `$DATA/gc.log`,
 server log in `$DATA/server.log`.
 
