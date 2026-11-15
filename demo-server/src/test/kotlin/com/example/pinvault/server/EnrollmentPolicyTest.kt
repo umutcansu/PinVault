@@ -383,6 +383,19 @@ class EnrollmentPolicyTest {
     }
 
     @Test
+    fun `a made-up request id is refused before it is counted, whatever its size`() = testApplication {
+        val limits = com.example.pinvault.server.service.EnrollmentLimits()
+        configureApp(limits = limits)
+        val huge = "x".repeat(50_000) // under the 64 KB body limit: before, each such id was a 50 KB table key
+        val response = pickup(huge, deviceKey())
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals("enrollment_request_not_found", response.json()["error"]!!.jsonPrimitive.content)
+        assertEquals(0, limits.pickupsPerRequest!!.size, "no table entry for a malformed id")
+        assertEquals(HttpStatusCode.NotFound, pickup("not a request id!", deviceKey()).status)
+        assertEquals(0, limits.pickupsPerRequest!!.size)
+    }
+
+    @Test
     fun `a request picks up nothing without its key`() = testApplication {
         configureApp()
         val (_, code) = createPolicy(approval = true)

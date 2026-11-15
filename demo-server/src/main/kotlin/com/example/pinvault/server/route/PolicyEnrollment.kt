@@ -267,6 +267,12 @@ class PolicyEnrollment(
      */
     suspend fun pickup(call: ApplicationCall, requestId: String, json: JsonObject?) {
         val remote = call.request.origin.remoteAddress
+        // The id is the body's text and becomes a rate-limit key: its shape is checked first (the
+        // server makes 32 hex characters), so a made-up one costs no table entry of its own size.
+        if (!isValidIdentifier(requestId)) {
+            return call.respondError(HttpStatusCode.NotFound, "enrollment_request_not_found",
+                "No such enrollment request. Enroll again with the code.")
+        }
         // A waiting device asks every few seconds; a loop asking faster costs a
         // lookup and a CSR check each time. Per request id (assigned by the
         // server) and per source address.

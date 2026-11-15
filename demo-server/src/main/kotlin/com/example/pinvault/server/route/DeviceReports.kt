@@ -35,6 +35,20 @@ class ReportLimits(
     /** Reports per reporting device (`REPORT_DEVICE_RATE_LIMIT`). */
     private val perDevice: RateLimiter? = null
 ) {
+    companion object {
+        /**
+         * From `REPORT_RATE_LIMIT` and `REPORT_DEVICE_RATE_LIMIT` (0 = no limit). The
+         * device key is a client id or a claimed device id, not an address: a full
+         * table drops the least recently used device ([RateLimiter.Overflow.EVICT_LRU];
+         * the address default, PREFIX, refused every device past [deviceKeys]).
+         */
+        fun of(perAddress: Int, perDevice: Int, deviceKeys: Int = RateLimiter.identityTableSize(100_000, emptyMap())): ReportLimits = ReportLimits(
+            perAddress = if (perAddress > 0) RateLimiter(maxAttempts = perAddress, windowMs = 10 * 60_000) else null,
+            perDevice = if (perDevice > 0) RateLimiter(maxAttempts = perDevice, windowMs = 10 * 60_000, maxKeys = deviceKeys,
+                overflow = RateLimiter.Overflow.EVICT_LRU) else null
+        )
+    }
+
     /** Counts a report from [remoteAddress]; checked before the body is read. */
     fun allowAddress(remoteAddress: String): Boolean =
         perAddress?.allow(RateLimiter.sourceKey(remoteAddress)) != false

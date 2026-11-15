@@ -98,7 +98,8 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
      *    delete, which its replay closes as applied.
      */
     fun purge(id: String, keepChangeRequest: Long? = null): Purged {
-        db.connection().use { conn ->
+        // IMMEDIATE: reads what belongs to the API, then deletes it, in one transaction.
+        db.immediateConnection().use { conn ->
             conn.autoCommit = false
             try {
                 val hostnames = conn.prepareStatement(
@@ -145,6 +146,11 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
                 throw e
             }
         }
+    }
+
+    /** How many Config APIs are registered (rate-limit tables keyed per Config API are sized by it). */
+    fun count(): Int = db.connection().use { conn ->
+        conn.prepareStatement("SELECT COUNT(*) FROM config_apis").use { stmt -> stmt.executeQuery().use { rs -> rs.next(); rs.getInt(1) } }
     }
 
     /** Reads the flag. Null when [id] has no row (caller → 404). */

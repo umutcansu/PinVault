@@ -149,4 +149,25 @@ class RateLimiterTest {
         assertEquals(300_000, RateLimiter.identityTableSize(100_000, mapOf("ATTESTATION_DEVICE_RATE_KEYS" to "300000"), name = "ATTESTATION_DEVICE_RATE_KEYS"))
         kotlin.test.assertFailsWith<IllegalStateException> { RateLimiter.identityTableSize(1, mapOf("RATE_LIMIT_IDENTITY_KEYS" to "12")) }
     }
+
+    @Test
+    fun `a key longer than the cap is kept as its digest, still counted and never merged`() {
+        val limiter = RateLimiter(maxAttempts = 1, windowMs = 60_000, maxKeys = 10, clock = { now }, overflow = RateLimiter.Overflow.EVICT_LRU)
+        val long = "id|" + "a".repeat(100_000)
+        assertTrue(limiter.allow(long))
+        assertFalse(limiter.allow(long), "counted")
+        assertTrue(limiter.exceeded(long))
+        assertTrue(limiter.allow(long + "b"), "another long key is another window")
+        assertTrue(RateLimiter.bounded(long).length < 80)
+        assertEquals("id|short", RateLimiter.bounded("id|short"))
+    }
+
+    @Test
+    fun `reports per device are never refused for a device the table has not seen`() {
+        // ReportLimits used to build its per-device table with the address default: past
+        // 10 000 devices bucketOf gave no network for a client id, and every new device got 429.
+        val limits = com.example.pinvault.server.route.ReportLimits.of(perAddress = 0, perDevice = 2, deviceKeys = 10_000)
+        repeat(30_000) { assertTrue(limits.allowDevice("default-tls", "client-$it"), "client-$it") }
+        (29_000 until 30_000).forEach { assertTrue(limits.allowDevice("default-tls", "client-$it")); assertFalse(limits.allowDevice("default-tls", "client-$it")) }
+    }
 }

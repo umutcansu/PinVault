@@ -569,10 +569,14 @@ private fun startServer() {
         auditLog, action = "device_rate_limited", what = "Device endpoint cut off",
         attemptsLabel = "rate-limited device endpoint"
     )
-    val reportLimits = com.example.pinvault.server.route.ReportLimits(
-        perAddress = if (reportRateLimit > 0) com.example.pinvault.server.service.RateLimiter(maxAttempts = reportRateLimit, windowMs = 10 * 60_000) else null,
-        perDevice = if (reportDeviceRateLimit > 0) com.example.pinvault.server.service.RateLimiter(maxAttempts = reportDeviceRateLimit, windowMs = 10 * 60_000) else null
-    )
+    // Tables keyed per Config API ("$configApiId|…") hold the limit once per Config API registered
+    // at start (at least one; the default one registers below). One added later shares the room:
+    // RATE_LIMIT_IDENTITY_KEYS / ATTESTATION_DEVICE_RATE_KEYS set the size outright.
+    val configApisAtStart = com.example.pinvault.server.store.ConfigApiRegistry(db).count().coerceAtLeast(1)
+    // Reports per device: the key is the device (client id or claimed id), not an address, so a
+    // full table drops the least recently used device (EVICT_LRU) — PREFIX refused every new one.
+    val reportLimits = com.example.pinvault.server.route.ReportLimits.of(reportRateLimit, reportDeviceRateLimit,
+        deviceKeys = com.example.pinvault.server.service.RateLimiter.identityTableSize(perConfigApi(deviceKeyLimit, configApisAtStart)))
     // Vault downloads served at once per source address, on every listener
     // (VAULT_DOWNLOAD_CONCURRENCY, default 4; 0 = unlimited).
     val vaultDownloadSlots = ((com.example.pinvault.server.service.ServerEnv.get("VAULT_DOWNLOAD_CONCURRENCY")?.toIntOrNull() ?: 4).coerceAtLeast(0))
@@ -774,7 +778,8 @@ private fun startServer() {
     )
     // The per-device table holds the fleet (ATTESTATION_DEVICE_LIMIT + a quarter, or ATTESTATION_DEVICE_RATE_KEYS): every device is counted.
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit,
-        deviceKeys = com.example.pinvault.server.service.RateLimiter.identityTableSize(attestationDeviceLimit, name = "ATTESTATION_DEVICE_RATE_KEYS"))
+        deviceKeys = com.example.pinvault.server.service.RateLimiter.identityTableSize(
+            if (attestationDeviceLimit == 0) 0 else perConfigApi(attestationDeviceLimit, configApisAtStart), name = "ATTESTATION_DEVICE_RATE_KEYS"))
     // Built here, not with the approval service above: its cards need the attestation service.
     changeDescriber = com.example.pinvault.server.service.ChangeDescriber(
         pinConfigStore, certPlanner, liveGate, ::stateHash, vaultFileStore, vaultTokenStore, audit = auditLog,
@@ -1686,3 +1691,6 @@ internal object ConfigApiAdminRoutesSwitch {
         else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '$raw')")
     }
 }
+
+/** [limit] once per Config API, capped where an int would overflow ([com.example.pinvault.server.service.RateLimiter.identityTableSize] caps the size). */
+private fun perConfigApi(limit: Int, configApis: Int): Int = (limit.toLong() * configApis).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()

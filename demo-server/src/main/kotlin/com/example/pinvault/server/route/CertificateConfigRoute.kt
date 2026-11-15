@@ -419,6 +419,10 @@ fun Route.certificateConfigRoutes(
                         return@post respondIssuedClientCert(call, clientId, existing)
                     }
                 }
+                // Counted after every cheap refusal above (the id's shape, reserved names, revocation,
+                // the CSR). The table drops the least recently used id when full: pushing another
+                // device's window out takes maxKeys distinct new ids inside one window, and only
+                // gives that device a fresh window; no request is let through uncounted.
                 if (enrollmentLimits.issuance?.allow("issue|$clientId") == false) {
                     call.response.header(HttpHeaders.RetryAfter, "600")
                     return@post call.respondText("""{"error":"rate_limited","message":"Too many certificates for this device id. Try again later."}""",

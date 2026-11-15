@@ -286,9 +286,6 @@ class AttestationService(
             if (!deviceAllowed(deviceId)) return rateLimited()
             keyAttestation = device.keyAttestation
         } else {
-            // A device not seen before: counted before the chain is checked, so a flood of
-            // new ids costs the address its quota, not this server a chain verification each.
-            if (!deviceAllowed(deviceId)) return rateLimited()
             // An Android report that says its key is attested, with no chain: the client
             // believes this server knows the key (it was forgotten meanwhile). Ask for the
             // chain again rather than register the key without the hardware's word.
@@ -298,6 +295,14 @@ class AttestationService(
                 return Outcome.Refused(HttpStatusCode.Conflict, "key_unknown",
                     "This server has no record of the device key. Send its attestation chain again.")
             }
+            // A device not seen before: counted after the cheap shape checks (the id's pattern,
+            // the signature, the request above) and before the chain is checked, so a flood
+            // of new ids costs the address its quota, not this server a chain verification
+            // each. The table drops the least recently used device when full, so pushing a
+            // real device's window out takes maxKeys distinct new ids within one window —
+            // more than the per-address limit lets one source send — and only gives that
+            // device a fresh window; nothing is ever let through uncounted.
+            if (!deviceAllowed(deviceId)) return rateLimited()
             val registration = when (val checked = checkRegistrationChain(chain, publicKey, deviceId, nonce, canonical, provider, providerOutside, now)) {
                 is Registration.Refuse -> return checked.outcome
                 is Registration.Accept -> checked

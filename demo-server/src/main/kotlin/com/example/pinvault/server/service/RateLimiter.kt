@@ -76,9 +76,10 @@ class RateLimiter(
     @get:Synchronized
     val size: Int get() = windows.size
 
-    /** Counts one attempt for [key] and says whether it may proceed. */
+    /** Counts one attempt for [rawKey] and says whether it may proceed. */
     @Synchronized
-    fun allow(key: String): Boolean {
+    fun allow(rawKey: String): Boolean {
+        val key = bounded(rawKey)
         val now = clock()
         var window = windows[key]
         if (window != null && now - window.start >= windowMs) {
@@ -104,14 +105,16 @@ class RateLimiter(
 
     /** Whether [key] has used up its quota in the current window; counts nothing. */
     @Synchronized
-    fun exceeded(key: String): Boolean {
+    fun exceeded(rawKey: String): Boolean {
+        val key = bounded(rawKey)
         val window = windows[key] ?: (if (buckets.isEmpty()) null else bucketOf(key)?.let { buckets[it] }) ?: return false
         return clock() - window.start < windowMs && window.count >= maxAttempts
     }
 
     /** Milliseconds until [key]'s window (or its overflow bucket's) runs out; the whole window when it has none. For `Retry-After`. */
     @Synchronized
-    fun retryAfterMs(key: String): Long {
+    fun retryAfterMs(rawKey: String): Long {
+        val key = bounded(rawKey)
         val window = windows[key] ?: (if (buckets.isEmpty()) null else bucketOf(key)?.let { buckets[it] }) ?: return windowMs
         return (window.start + windowMs - clock()).coerceIn(1, windowMs)
     }
@@ -161,6 +164,17 @@ class RateLimiter(
     }
 
     companion object {
+        /**
+         * The longest key kept as it is. A key is often built from what the caller
+         * sent (a device id, a request id); callers validate those, and this bounds
+         * what one entry can cost whatever a caller forgets: a longer key is kept as
+         * its SHA-256 (still counted, never merged with another key).
+         */
+        const val MAX_KEY_CHARS = 160
+
+        internal fun bounded(key: String): String = if (key.length <= MAX_KEY_CHARS) key else
+            "sha256:" + java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
         /**
          * How many identities an [Overflow.EVICT_LRU] table holds: `RATE_LIMIT_IDENTITY_KEYS`
          * when set (1 000 – 10 000 000), else a quarter above [expected] (the most identities
