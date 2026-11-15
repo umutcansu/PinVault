@@ -1,5 +1,15 @@
 # Load test results (2026-11-15)
 
+> **Status of the fixes (branch `claude/loadtest-attestation-651653`, local only).**
+> The numbers below are all **before** the fixes. Since then: the per-device
+> rate limiter never fails open (bounded LRU, O(1) expiry, sized from the
+> configured limits), the active token key is kept in memory, and SQLite runs
+> in WAL mode with `busy_timeout=5000` and `synchronous=NORMAL`
+> (`DB_JOURNAL_MODE`, default `wal`). **Not done yet:** re-measuring the
+> steady-state, watermark-write and registration ramps with these fixes
+> (waiting for the machine), and the optional items: pooled read connections
+> and a cheaper registration `COUNT`.
+
 **One server instance sustains about 250 attestation rounds/s with p95 under
 10 ms. It breaks between 250 and 300 rounds/s; at the default 5-minute
 interval that is about 75 000–90 000 devices.** The limit is not CPU: at the
