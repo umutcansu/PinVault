@@ -262,7 +262,8 @@ function provision() {
 
 /** Hiç kurulmamışsa kurar, duruyorsa başlatır; kanıt üretmez (K01 üretir). */
 async function ensure() {
-  if (await isHealthy()) return;
+  const { assertDeleteJournal } = require('./journalGuard');
+  if (await isHealthy()) return assertDeleteJournal(env.FRESH_CONTAINER);
   if (!exists()) {
     copyTree();
     run('./scripts/setup.sh', []);
@@ -273,6 +274,7 @@ async function ensure() {
   }
   compose(['up', '-d', '--build']);
   await waitHealthy();
+  assertDeleteJournal(env.FRESH_CONTAINER);
   // Sunucu TLS sertifikasını ilk açılışta üretiyor ve notBefore = "şimdi"
   // oluyor. Emülatörün saati Mac'in saatinden bir saniye geride olabildiği
   // için telefon hemen bağlanırsa sertifikayı "not valid until …" diye

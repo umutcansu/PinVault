@@ -43,6 +43,7 @@ async function start({ timeoutMs = 120_000, requireMtls = true } = {}) {
 /** Host kapalı kalmışsa (ör. yarıda kesilen bir test) geri açar. */
 async function ensureUp() {
   if (!(await hostApi.isHealthy()) || !(await hostApi.mtlsApiRunning())) await start();
+  require('./journalGuard').assertDeleteJournal(env.CONTAINER);
 }
 
 /**

@@ -51,6 +51,7 @@ Yeni senaryolar PLAN.md'deki gruplara göre eklenir: sıfırdan kurulum (K), pin
 - Node 18+ ve Docker CLI (bazı senaryolar host container'ını durdurup başlatır ya da ortam değişkenlerini geçici değiştirir).
 - İstemciyi derlemek için JDK 17 (JAVA_HOME yoksa Android Studio'nun ya da `~/Library/Java` altındaki JDK aranır).
 - Araya giren proxy için host'un anahtarı: `cd ../sample-host && ./scripts/export-server-key.sh`.
+- Host'un veritabanı `DB_JOURNAL_MODE=delete` ile çalışmalı (host `.env`'inde; compose dosyası değişkeni container'a geçirmeli). Testler canlı veritabanını Mac'ten `sqlite3` ile bind mount üzerinden okur; WAL kipinde bu, sunucuyu SIGBUS ile düşürebilir. Kurulum, her senaryo ve geçici test sunucusu bunu denetler, yanlışsa açık bir hatayla durur (`lib/journalGuard.js`). Eski bir compose kopyası (ör. `.local/host-ios`) değişkeni geçirmiyorsa satırı `../sample-host/docker-compose.yml`'den kopyala.
 
 ## Çalıştırma
 
@@ -108,7 +109,7 @@ Her koşu `evidence/index.html` dosyasını yeniden üretir. En üstte kapsam ma
 
 ## Bilinmesi gerekenler
 
-- Testler host'un gerçek pin config'ini ve vault dosyalarını değiştirir; sonunda temel duruma döndürür. Yarıda kesilirse bir sonraki koşunun kurulumu düzeltir.
+- Testler host'un gerçek pin config'ini ve vault dosyalarını değiştirir; sonunda temel duruma döndürür. Yarıda kesilirse bir sonraki koşunun kurulumu pin'leri düzeltir, ama her şeyi değil: kesilen senaryonun bu cihaz adına kaydettiği bir istemci kimliği etkin kalır (sonraki kayıtlar `device_already_enrolled` alır; panelden iptal et) ve kapattığı vault (`vault-enabled`) kapalı kalabilir. Koşuyu durdururken Playwright'ın işçi süreçlerinin de bittiğine bak (`pgrep -fl playwright`): ana süreç ölünce bir işçi senaryosunu bitirip temizliğini yapamadan ölebilir.
 - Bazı senaryolar host container'ını birkaç saniyeliğine durdurur ya da sunucu ortam değişkenlerini geçici değiştirir (`scripts/env-override.sh`).
 - Arka plan senaryosu emülatörün saatini bir WorkManager periyodu kadar ileri alır ve sonunda geri alır; bunun için emülatör imajındaki `su` kullanılır. WorkManager periyodik görevi zamanı gelmeden, zorlansa bile çalıştırmaz.
 - Araya girme senaryoları (G) emülatörde `iptables` ile trafiği saldırgan proxy'ye yönlendirir; kurallar test sonunda silinir.

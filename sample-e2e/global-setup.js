@@ -158,6 +158,8 @@ module.exports = async () => {
       throw new Error(`Host'a ulaşılamıyor (${env.WEB_URL}). Önce: cd ${env.HOST_DIR} && docker compose up -d\n${e.message}`);
     }
   }
+  // The suite reads the live database from the Mac: never against a WAL host (lib/journalGuard.js).
+  require('./lib/journalGuard').assertDeleteJournal(env.CONTAINER);
   const probe = await hostApi.api('/api/v1/connection-history');
   if (probe.status !== 200) throw new Error(`Host API anahtarını reddetti (HTTP ${probe.status}).`);
   hostApi.provision();

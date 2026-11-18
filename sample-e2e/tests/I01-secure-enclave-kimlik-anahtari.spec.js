@@ -101,7 +101,7 @@ test('iOS: kimlik anahtarı Secure Enclave\'de üretiliyor, dışarı alınamıy
           `SELECT client_id, config_api_id, device_uid, spki_sha256, attested, attestation_security_level, attestation_reason FROM client_identities WHERE client_id='${clientId}';`],
       );
       // client_identities SPKI özetini Base64, attested_devices hex yazar.
-      const serverSpkiB64 = (identity.match(/spki_sha256 = (\S+)/) || [])[1];
+      const serverSpkiB64 = hostApi.lineValue(identity, 'spki_sha256') || undefined;
       const serverSpki = serverSpkiB64 ? Buffer.from(serverSpkiB64, 'base64').toString('hex') : undefined;
       const record = await attestationRecord(deviceId);
       const row = hostApi.dbQuery(
@@ -129,8 +129,8 @@ test('iOS: kimlik anahtarı Secure Enclave\'de üretiliyor, dışarı alınamıy
           JSON.stringify(record, null, 2),
         ].join('\n'),
       );
-      expect(identity).toContain(`device_uid = ${deviceId}`);
-      expect(identity).toContain('attestation_reason = chain_missing');
+      expect(hostApi.lineValue(identity, 'device_uid')).toBe(deviceId);
+      expect(hostApi.lineValue(identity, 'attestation_reason')).toBe('chain_missing');
       expect(serverSpki).toBe(onDeviceSpki);
       expect(attSpki).toBe(onDeviceSpki);
       expect(reportLevel).toBe('secure_enclave');

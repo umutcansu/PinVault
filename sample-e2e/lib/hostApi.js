@@ -227,6 +227,16 @@ async function setVaultEnabled(apiId, enabled) {
  * doğrudan okunur. Yazma YOK — yalnızca kanıt okuması (vault blob'u diskte
  * şifreli mi, cihazın public key'i kayıtlı mı).
  */
+/**
+ * The value of [column] in `sqlite3 -line` output. The CLI printed
+ * `column = value` up to 3.53 and prints aligned `column: value` from 3.54
+ * (macOS 26.x ships 3.54): the assertion must not depend on which.
+ */
+function lineValue(output, column) {
+  const m = String(output).match(new RegExp(`^\\s*${column}\\s*(?:=|:)\\s*(.*)$`, 'm'));
+  return m ? m[1].trim() : null;
+}
+
 function dbQuery(sql, { mode = 'list' } = {}) {
   return execFileSync('sqlite3', ['-readonly', `-${mode}`, env.DB_FILE, sql], {
     encoding: 'utf8',
@@ -770,6 +780,7 @@ module.exports = {
   vaultEnabled,
   setVaultEnabled,
   dbQuery,
+  lineValue,
   vaultBlobFromDb,
   devicePublicKeyPem,
   deviceUserAuthKeyPem,

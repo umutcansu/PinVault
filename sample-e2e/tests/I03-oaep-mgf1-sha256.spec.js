@@ -40,10 +40,11 @@ test('iOS: cihaz anahtarı RSA-OAEP-SHA256-MGF1-SHA256 algoritmasıyla kayıtlı
       const sql = (table) => `SELECT device_id, config_api_id, algorithm, registered_at FROM ${table} WHERE device_id='${deviceId}' ORDER BY config_api_id;`;
       const e2e = await attachCommand(testInfo, 'sqlite3 — device_public_keys (bu cihaz)', 'sqlite3', ['-readonly', '-line', env.DB_FILE, sql('device_public_keys')]);
       const userAuth = await attachCommand(testInfo, 'sqlite3 — device_user_auth_keys (bu cihaz)', 'sqlite3', ['-readonly', '-line', env.DB_FILE, sql('device_user_auth_keys')]);
-      const algorithms = (text) => [...text.matchAll(/algorithm = (\S+)/g)].map((m) => m[1]);
+      // `algorithm = x` up to sqlite3 3.53, aligned `algorithm: x` from 3.54 (see hostApi.lineValue).
+      const algorithms = (text) => [...text.matchAll(/^\s*algorithm\s*(?:=|:)\s*(\S+)/gm)].map((m) => m[1]);
       expect(algorithms(e2e).length, 'cihaz anahtarı kayıtlı değil').toBeGreaterThan(0);
       expect(new Set(algorithms(e2e))).toEqual(new Set([ALGORITHM]));
-      expect(e2e).toContain(`config_api_id = ${env.VAULT_API}`);
+      expect(e2e).toMatch(new RegExp(`^\\s*config_api_id\\s*(?:=|:)\\s*${env.VAULT_API}\\s*$`, 'm'));
       expect(algorithms(userAuth).length, 'ekran kilidi anahtarı kayıtlı değil').toBeGreaterThan(0);
       expect(new Set(algorithms(userAuth))).toEqual(new Set([ALGORITHM]));
     });

@@ -123,9 +123,9 @@ test('iOS: cihaz kimliği küçük harf identifierForVendor; veri ve Keychain si
         JSON.stringify(cert, null, 2),
       ].join('\n'));
       expect(cert.deviceUid).toBe(ids.before.vault);
-      expect(out[0]).toContain(`device_uid = ${ids.before.vault}`);
-      expect(out[0]).toContain('device_uid_proven = 1');
-      expect(out[1]).toContain(`device_uid = ${ids.before.vault}`);
+      expect(hostApi.lineValue(out[0], 'device_uid')).toBe(ids.before.vault);
+      expect(hostApi.lineValue(out[0], 'device_uid_proven')).toBe('1');
+      expect(hostApi.lineValue(out[1], 'device_uid')).toBe(ids.before.vault);
       await dashboard.expectClientCert(env.MTLS_API, clientId, { revoked: false });
       await dashboard.snap(`panelde kayıt: ${clientId}`);
     });
