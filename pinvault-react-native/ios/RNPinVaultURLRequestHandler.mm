@@ -4,8 +4,10 @@
 // RCTNetworking asks every RCTURLRequestHandler whether it can handle a request
 // and picks the one with the highest handlerPriority (RCTNetworking.mm,
 // handlerForRequest:). RCTHTTPRequestHandler has none (0); this one answers
-// YES for https with priority 10, so RN's own handler only sees plain http
-// (which ATS refuses unless the app allows it). In the New Architecture the
+// YES for https with priority 10, and in a release build also for plain http,
+// which it fails ("CLEARTEXT communication not enabled for client", Android's
+// rule). In a debug build RN's own handler sees plain http (Metro; ATS
+// refuses it unless the app allows it). In the New Architecture the
 // handler list comes from codegen: package.json → codegenConfig.ios.
 // modulesConformingToProtocol.RCTURLRequestHandler names this module, and
 // RCTAppSetupUtils adds it to RCTNetworking's handlers.

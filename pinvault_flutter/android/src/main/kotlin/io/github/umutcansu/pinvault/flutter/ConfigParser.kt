@@ -472,12 +472,24 @@ internal object ConfigParser {
         val encryption = fromEntry("encryption", declared?.encryption, dartEncryption)
         val userAuth = fromEntry("userAuth", declared?.userAuth, dartUserAuth)
         // Which Config API serves the file, its path there and how the device shows it may download
-        // it: fixed where the entry gives them, the config's otherwise.
+        // it: fixed where the entry gives them, the config's otherwise (configApi: see below).
         fun <T : Any> fixedByEntry(field: String, entryValue: T?, dartValue: T?): T? {
             if (entryValue != null && dartValue != null && dartValue != entryValue) fixed(field)
             return entryValue ?: dartValue
         }
         val endpoint = fixedByEntry("endpoint", declared?.endpoint, dartEndpoint) ?: throw BridgeInputException("${f.path}.endpoint: required")
+        // The block that serves the file also vouches for it (a file without its own signature key is
+        // checked with that block's signing keys). In a release build with a native file, an entry
+        // without configApi means the library's default block (ConfigApiBlock.DEFAULT_ID, what an
+        // absent value resolves to); Dart may repeat that, or name the only block the file declares,
+        // but never pick another one (review 2026-11-17).
+        if (entryOnly && declared?.configApi == null && dartConfigApi != null &&
+            native!!.blocks.size > 1 && dartConfigApi != ConfigApiBlock.DEFAULT_ID
+        ) {
+            throw BridgeInputException("${f.path}.configApi: the app's native security file (${native.source}) does not give configApi for " +
+                "vault file '$key' and declares more than one Config API, and a release build takes it only from there " +
+                "(absent = '${ConfigApiBlock.DEFAULT_ID}'); declare it in that file's vaultFiles entry")
+        }
         val configApi = fixedByEntry("configApi", declared?.configApi, dartConfigApi)
         val policy = fixedByEntry("accessPolicy", declared?.accessPolicy, dartPolicy)
         // The tighter of the file's own cap and the config-wide one: a per-file value

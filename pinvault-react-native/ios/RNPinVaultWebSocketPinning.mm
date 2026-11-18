@@ -21,6 +21,15 @@
 // stream (pins replace CA trust, as in every PinVault session), the TLS 1.2
 // floor of SocketRocket's default, and -evaluateServerTrust:forDomain: →
 // PinVault for the host and port of the socket's own URL.
+//
+// A release build refuses every socket SocketRocket would open without TLS
+// (ws, http) before it connects — Android's rule, "CLEARTEXT communication
+// not enabled for client" (the decision and the error: Swift,
+// RNPinVaultReactNetworking webSocketRefusal:). The initializer marks such a
+// socket and -open, replaced as well, fails it through SocketRocket's own
+// -_failWithError: (the path its -open takes for an empty URL): RN's
+// delegate hears webSocket:didFailWithError: → JS `onerror` / `onclose`, and
+// no TCP connection is made. Without -_failWithError: the socket never opens.
 #import "RNPinVaultWebSocketPinning.h"
 
 #import <Security/Security.h>
@@ -34,16 +43,22 @@
 #endif
 
 typedef id (*RNPVSocketInit)(id, SEL, NSURLRequest *, NSArray *, id);
+typedef void (*RNPVSocketOpen)(id, SEL);
+typedef void (*RNPVSocketFail)(id, SEL, NSError *);
 
 static os_unfair_lock gLock = OS_UNFAIR_LOCK_INIT;
 static RNPVSocketInit gOriginalInit = NULL;
+static RNPVSocketOpen gOriginalOpen = NULL;
 static Class gPolicyClass = Nil;
 static char kHostKey;
 static char kPortKey;
+static char kRefusalKey;
 
 static NSString *const kSocketClass = @"SRWebSocket";
 static NSString *const kPolicyClass = @"SRSecurityPolicy";
 static NSString *const kInitSelector = @"initWithURLRequest:protocols:securityPolicy:";
+static NSString *const kOpenSelector = @"open";
+static NSString *const kFailSelector = @"_failWithError:";
 static NSString *const kUpdateSelector = @"updateSecurityOptionsInStream:";
 static NSString *const kEvaluateSelector = @"evaluateServerTrust:forDomain:";
 
@@ -136,17 +151,39 @@ static NSURLRequest *WithAttestationHeaders(NSURLRequest *request)
 
 static id PinnedInit(id self, SEL _cmd, NSURLRequest *request, NSArray *protocols, id securityPolicy)
 {
+  NSError *refusal = nil;
   if (RequiresTLS(request.URL)) {
     securityPolicy = PolicyFor(request.URL);
     request = WithAttestationHeaders(request);
+  } else {
+    refusal = [RNPinVaultReactNetworking webSocketRefusal:request.URL];
   }
-  return gOriginalInit(self, _cmd, request, protocols, securityPolicy);
+  id socket = gOriginalInit(self, _cmd, request, protocols, securityPolicy);
+  if (refusal != nil && socket != nil) {
+    objc_setAssociatedObject(socket, &kRefusalKey, refusal, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  return socket;
 }
 
-static Method SocketInit(void)
+// A refused (cleartext, release) socket fails instead of connecting.
+static void PinnedOpen(id self, SEL _cmd)
+{
+  NSError *refusal = objc_getAssociatedObject(self, &kRefusalKey);
+  if (refusal == nil) {
+    gOriginalOpen(self, _cmd);
+    return;
+  }
+  NSLog(@"PinVault: WebSocket refused (%@)", refusal.localizedDescription);
+  SEL fail = NSSelectorFromString(kFailSelector);
+  if ([self respondsToSelector:fail]) {
+    ((RNPVSocketFail)[self methodForSelector:fail])(self, fail, refusal);
+  }
+}
+
+static Method SocketMethod(NSString *selector)
 {
   Class socket = NSClassFromString(kSocketClass);
-  return socket ? class_getInstanceMethod(socket, NSSelectorFromString(kInitSelector)) : NULL;
+  return socket ? class_getInstanceMethod(socket, NSSelectorFromString(selector)) : NULL;
 }
 
 // Info.plist PinVaultPinReactNativeNetworking = NO: the native opt-out of the https handler covers this too.
@@ -170,11 +207,17 @@ static BOOL Enabled(void)
   }
   os_unfair_lock_lock(&gLock);
   BOOL installed = NO;
-  Method method = SocketInit();
-  if (method != NULL && gOriginalInit != NULL) {
-    installed = method_getImplementation(method) == (IMP)PinnedInit;
-  } else if (method != NULL && PolicyClass() != Nil &&
-             strcmp(method_getTypeEncoding(method) ?: "", "@40@0:8@16@24@32") == 0) {
+  Method method = SocketMethod(kInitSelector);
+  Method open = SocketMethod(kOpenSelector);
+  if (method != NULL && open != NULL && gOriginalInit != NULL) {
+    installed = method_getImplementation(method) == (IMP)PinnedInit &&
+                method_getImplementation(open) == (IMP)PinnedOpen;
+  } else if (method != NULL && open != NULL && PolicyClass() != Nil &&
+             strcmp(method_getTypeEncoding(method) ?: "", "@40@0:8@16@24@32") == 0 &&
+             strcmp(method_getTypeEncoding(open) ?: "", "v16@0:8") == 0) {
+    // -open first: a socket the initializer marks must never meet the original -open.
+    gOriginalOpen = (RNPVSocketOpen)method_getImplementation(open);
+    method_setImplementation(open, (IMP)PinnedOpen);
     gOriginalInit = (RNPVSocketInit)method_getImplementation(method);
     method_setImplementation(method, (IMP)PinnedInit);
     installed = YES;

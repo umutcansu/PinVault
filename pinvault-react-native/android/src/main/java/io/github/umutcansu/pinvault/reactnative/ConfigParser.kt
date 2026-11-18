@@ -509,13 +509,25 @@ internal object ConfigParser {
         val signatureKey = fromEntry("signaturePublicKey", declared?.signaturePublicKey, jsSignatureKey) { a, b -> a.trim() == b.trim() }
         val encryption = fromEntry("encryption", declared?.encryption, jsEncryption)
         val userAuth = fromEntry("userAuth", declared?.userAuth, jsUserAuth)
-        // Which Config API serves the file, its path there and how the device shows it may download
-        // it: fixed where the entry gives them, the config's otherwise.
+        // Its path on the Config API and how the device shows it may download it: fixed where the
+        // entry gives them, the config's otherwise.
         fun <T : Any> fixedByEntry(field: String, entryValue: T?, jsValue: T?): T? {
             if (entryValue != null && jsValue != null && jsValue != entryValue) fixed(field)
             return entryValue ?: jsValue
         }
         val endpoint = fixedByEntry("endpoint", declared?.endpoint, jsEndpoint) ?: throw BridgeInputException("${f.path}.endpoint: required")
+        // Which Config API serves the file: fixed where the entry gives it. A file without its own
+        // signaturePublicKey is checked with the signing keys of that block, so in a release build
+        // with a native file JS may name it only where it cannot pick another block than an absent
+        // value would (the library's ConfigApiBlock.DEFAULT_ID): the file declares at most one
+        // block, or JS names the default one (review 2026-11-17).
+        if (entryOnly && declared?.configApi == null && jsConfigApi != null &&
+            native!!.blocks.size > 1 && jsConfigApi != io.github.umutcansu.pinvault.model.ConfigApiBlock.DEFAULT_ID
+        ) {
+            throw BridgeInputException("${f.path}.configApi: the app's native security file (${native.source}) declares more than one " +
+                "Config API and does not give configApi for vault file '$key', and a release build takes it only from there " +
+                "(the block named also vouches for the file); declare it in that file's vaultFiles entry")
+        }
         val configApi = fixedByEntry("configApi", declared?.configApi, jsConfigApi)
         val policy = fixedByEntry("accessPolicy", declared?.accessPolicy, jsPolicy)
         // The tighter of the file's own cap and the config-wide one: a per-file value

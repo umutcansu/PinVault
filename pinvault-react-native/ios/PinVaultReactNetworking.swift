@@ -14,8 +14,27 @@ public final class PinVaultReactNetworking: NSObject {
     @objc public static let enabled: Bool =
         (Bundle.main.object(forInfoDictionaryKey: "PinVaultPinReactNativeNetworking") as? Bool) ?? true
 
+    /// A release build of the app: no plain http / ws through React Native's
+    /// networking (Core/ReactNetworking.swift, Android's rule). The same
+    /// `#if DEBUG` as `PinVaultBridge.start`.
+    @objc public static var releaseBuild: Bool {
+        #if DEBUG
+        return false
+        #else
+        return true
+        #endif
+    }
+
+    /// https; in a release build also plain http, which ``prepare`` fails.
     @objc public static func canHandle(_ request: URLRequest) -> Bool {
-        enabled && ReactNetworking.handles(request)
+        ReactNetworking.claims(request, enabled: enabled, httpsOnly: releaseBuild)
+    }
+
+    /// RNPinVaultWebSocketPinning.mm: the error a WebSocket to [url] fails with
+    /// before it connects, nil when it may connect (wss / https, a debug
+    /// build, or the Info.plist opt-out — which also leaves the hook out).
+    @objc public static func webSocketRefusal(_ url: URL?) -> NSError? {
+        ReactNetworking.webSocketRefusal(url, enabled: enabled, httpsOnly: releaseBuild)
     }
 
     /// The server-trust check of a `wss` WebSocket (RNPinVaultWebSocketPinning.mm):

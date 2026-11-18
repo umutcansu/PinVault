@@ -373,6 +373,60 @@ final class SecurityAndNetworkingTests: XCTestCase {
         XCTAssertTrue(r.error?.localizedDescription.contains("PinVault has not started") == true)
     }
 
+    // Android's rule (PinVaultNetworking.kt `httpsOnly = releaseBuild`): a
+    // release build refuses plain http / ws through RN's networking, every
+    // host, before and after start; debug leaves them to RN.
+
+    func testAReleaseBuildClaimsPlainHttpAndFailsItBeforeAndAfterStart() async {
+        let http = URLRequest(url: URL(string: "http://pinned.example/x")!)
+        XCTAssertTrue(ReactNetworking.claims(http, enabled: true, httpsOnly: true))
+        XCTAssertTrue(ReactNetworking.claims(URLRequest(url: URL(string: "HTTP://other.example/")!), enabled: true, httpsOnly: true))
+        XCTAssertTrue(ReactNetworking.claims(URLRequest(url: URL(string: "https://h.example/")!), enabled: true, httpsOnly: true))
+        // RN's other handlers keep their schemes.
+        for other in ["file:///tmp/a", "data:text/plain,a", "blob:abc"] {
+            XCTAssertFalse(ReactNetworking.claims(URLRequest(url: URL(string: other)!), enabled: true, httpsOnly: true), other)
+        }
+        let started: ReactNetworking.Send = { _, _ in
+            XCTFail("a cleartext request must not be sent")
+            return (Data(), URLResponse())
+        }
+        for send in [started, nil] {
+            let r = Recorder()
+            _ = ReactNetworking.start(http, send: send, maxResponseBytes: 10, describe: describe, callbacks: r.callbacks)
+            await fulfillment(of: [r.done], timeout: 2)
+            XCTAssertEqual(r.events, ["complete"])
+            XCTAssertEqual(r.error?.domain, "PinVault")
+            XCTAssertEqual(r.error?.userInfo["exceptionName"] as? String, "UnknownServiceException")
+            XCTAssertTrue(r.error?.localizedDescription.hasPrefix("UnknownServiceException: CLEARTEXT communication not enabled for client") == true)
+        }
+    }
+
+    func testADebugBuildLeavesPlainHttpToReactNative() {
+        let http = URLRequest(url: URL(string: "http://localhost:8081/status")!)
+        XCTAssertFalse(ReactNetworking.claims(http, enabled: true, httpsOnly: false))
+        XCTAssertFalse(ReactNetworking.handles(http))
+        XCTAssertTrue(ReactNetworking.claims(URLRequest(url: URL(string: "https://h.example/")!), enabled: true, httpsOnly: false))
+        XCTAssertNil(ReactNetworking.webSocketRefusal(URL(string: "ws://localhost:8081/hot"), enabled: true, httpsOnly: false))
+    }
+
+    func testAReleaseBuildRefusesACleartextWebSocket() {
+        for url in ["ws://pinned.example/s", "WS://pinned.example:80/s", "http://pinned.example/s", "ftp://h.example/"] {
+            let e = ReactNetworking.webSocketRefusal(URL(string: url), enabled: true, httpsOnly: true)
+            XCTAssertEqual(e?.userInfo["exceptionName"] as? String, "UnknownServiceException", url)
+            XCTAssertTrue(e?.localizedDescription.contains("CLEARTEXT communication not enabled for client") == true, url)
+        }
+        XCTAssertNotNil(ReactNetworking.webSocketRefusal(nil, enabled: true, httpsOnly: true))
+        XCTAssertNil(ReactNetworking.webSocketRefusal(URL(string: "wss://h.example/s"), enabled: true, httpsOnly: true))
+        XCTAssertNil(ReactNetworking.webSocketRefusal(URL(string: "https://h.example/s"), enabled: true, httpsOnly: true))
+    }
+
+    func testThePlistOptOutLeavesEverythingToReactNative() {
+        // PinVaultPinReactNativeNetworking = NO: Android's "remove the provider".
+        XCTAssertFalse(ReactNetworking.claims(URLRequest(url: URL(string: "http://h.example/")!), enabled: false, httpsOnly: true))
+        XCTAssertFalse(ReactNetworking.claims(URLRequest(url: URL(string: "https://h.example/")!), enabled: false, httpsOnly: true))
+        XCTAssertNil(ReactNetworking.webSocketRefusal(URL(string: "ws://h.example/"), enabled: false, httpsOnly: true))
+    }
+
     func testTheAnswerGoesToRNInChunksAfterTheResponse() async {
         let r = Recorder()
         let body = Data(repeating: 7, count: ReactNetworking.chunkSize * 2 + 10)

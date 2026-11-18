@@ -12,8 +12,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)install;
 
 /// Whether every SocketRocket socket to a `wss` / `https` URL is judged by
-/// PinVault right now: the hook is installed and still the initializer's
-/// implementation (nothing replaced it since). YES without SocketRocket in the app.
+/// PinVault right now — and, in a release build, every socket without TLS
+/// refused before it connects: the hook is installed and still the
+/// initializer's and -open's implementation (nothing replaced them since).
+/// YES without SocketRocket in the app.
 + (BOOL)isPinned;
 
 @end

@@ -580,14 +580,25 @@ public enum ConfigParser {
         let signatureKey = try fromEntry("signaturePublicKey", declared?.signaturePublicKey, jsSignatureKey) { trimmed($0) == trimmed($1) }
         let encryption = try fromEntry("encryption", declared?.encryption, jsEncryption) { $0 == $1 }
         let userAuth = try fromEntry("userAuth", declared?.userAuth, jsUserAuth) { $0 == $1 }
-        // Which Config API serves the file, its path there and how the device shows it may download
-        // it: fixed where the entry gives them, the config's otherwise.
+        // Its path on the Config API and how the device shows it may download it: fixed where the
+        // entry gives them, the config's otherwise.
         func fixedByEntry<T: Equatable>(_ field: String, _ entryValue: T?, _ jsValue: T?) throws -> T? {
             if let entryValue, let jsValue, jsValue != entryValue { throw fixed(field) }
             return entryValue ?? jsValue
         }
         guard let endpoint = try fixedByEntry("endpoint", declared?.endpoint, jsEndpoint) else {
             throw BridgeInputError("\(f.path).endpoint: required")
+        }
+        // Which Config API serves the file: fixed where the entry gives it. A file without its own
+        // signaturePublicKey is checked with the signing keys of that block, so in a release build
+        // with a native file JS may name it only where it cannot pick another block than an absent
+        // value would (the library's ConfigApiBlock.defaultId): the file declares at most one
+        // block, or JS names the default one (review 2026-11-17).
+        if entryOnly, let native, declared?.configApi == nil, let jsConfigApi,
+           native.blocks.count > 1, jsConfigApi != ConfigApiBlock.defaultId {
+            throw BridgeInputError("\(f.path).configApi: the app's native security file (\(native.source)) declares more than one "
+                + "Config API and does not give configApi for vault file '\(key)', and a release build takes it only from there "
+                + "(the block named also vouches for the file); declare it in that file's vaultFiles entry")
         }
         let configApi = try fixedByEntry("configApi", declared?.configApi, jsConfigApi)
         let policy = try fixedByEntry("accessPolicy", declared?.accessPolicy, jsPolicy)

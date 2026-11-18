@@ -134,6 +134,34 @@ class ReleaseFieldRulesTest {
         }
     }
 
+    // Review 2026-11-17: a vault file without its own signaturePublicKey is checked with the keys
+    // of the block its configApi names; with two declared blocks a bare entry let JS pick that block.
+    @Test fun `with several native blocks a release build takes a vault file's configApi from JS only when it names the default block`() {
+        val second = """,{"id":"second","url":"https://h2.example/","bootstrapPins":[{"hostname":"h2.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}"""
+        fun two(vault: String) =
+            NativeSecurity.parse("""{"configApis":[{$block}$second],"vaultFiles":[$vault]}""", "assets/pinvault_security.json")
+        val both = """$api},{"id":"second","url":"https://h2.example/"}]"""
+        fun doc(fields: String) = """{$both,"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc"$fields}]}"""
+        val bare = two("""{"key":"doc"}""")
+        refused(doc(""","configApi":"second""""), bare,
+            "vaultFiles[0].configApi", "declares more than one Config API", "does not give configApi", "only from there", "vaultFiles entry")
+        // The default block (what an absent value resolves to) cannot select another block.
+        assertEquals("default", parse(doc(""","configApi":"default""""), bare).config.vaultFiles.getValue("doc").configApiId)
+        assertEquals("default", parse(doc(""), bare).config.vaultFiles.getValue("doc").configApiId)
+        // An entry that gives configApi keeps today's rule: the entry wins, another JS value is refused.
+        val fixed = two("""{"key":"doc","configApi":"second"}""")
+        assertEquals("second", parse(doc(""), fixed).config.vaultFiles.getValue("doc").configApiId)
+        assertEquals("second", parse(doc(""","configApi":"second""""), fixed).config.vaultFiles.getValue("doc").configApiId)
+        refused(doc(""","configApi":"default""""), fixed, "vaultFiles[0].configApi", "native value is fixed")
+        // A debug build takes JS's value as before.
+        assertEquals("second", parse(doc(""","configApi":"second""""), bare, release = false).config.vaultFiles.getValue("doc").configApiId)
+        // One native block: JS can only name that block, whatever its id.
+        val mainBlock = block.replace(""""id":"default"""", """"id":"main"""")
+        val one = NativeSecurity.parse("""{"configApis":[{$mainBlock}],"vaultFiles":[{"key":"doc"}]}""", "assets/pinvault_security.json")
+        val js = """{"configApis":[{"id":"main","url":"https://h.example:8081/"}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc","configApi":"main"}]}"""
+        assertEquals("main", parse(js, one).config.vaultFiles.getValue("doc").configApiId)
+    }
+
     // Review 2026-11-14 (K2): narrowing wantPinsFor took a pinned host's pins out of the signed
     // view; with managed trust roots that host is then accepted through the roots.
     @Test fun `with managed trust roots a release build takes wantPinsFor from the file only`() {

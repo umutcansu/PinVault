@@ -555,13 +555,24 @@ public enum ConfigParser {
         let encryption = try fromEntry("encryption", declared?.encryption, jsEncryption) { $0 == $1 }
         let userAuth = try fromEntry("userAuth", declared?.userAuth, jsUserAuth) { $0 == $1 }
         // Which Config API serves the file, its path there and how the device shows it may download
-        // it: fixed where the entry gives them, the config's otherwise.
+        // it: fixed where the entry gives them, the config's otherwise (configApi: see below).
         func fixedByEntry<T: Equatable>(_ field: String, _ entryValue: T?, _ jsValue: T?) throws -> T? {
             if let entryValue, let jsValue, jsValue != entryValue { throw fixed(field) }
             return entryValue ?? jsValue
         }
         guard let endpoint = try fixedByEntry("endpoint", declared?.endpoint, jsEndpoint) else {
             throw BridgeInputError("\(f.path).endpoint: required")
+        }
+        // The block that serves the file also vouches for it (a file without its own signature key is
+        // checked with that block's signing keys). In a release build with a native file, an entry
+        // without configApi means the library's default block (ConfigApiBlock.defaultId, what an
+        // absent value resolves to); Dart may repeat that, or name the only block the file declares,
+        // but never pick another one (review 2026-11-17).
+        if entryOnly, let native, declared?.configApi == nil, let jsConfigApi,
+           native.blocks.count > 1, jsConfigApi != ConfigApiBlock.defaultId {
+            throw BridgeInputError("\(f.path).configApi: the app's native security file (\(native.source)) does not give configApi for "
+                + "vault file '\(key)' and declares more than one Config API, and a release build takes it only from there "
+                + "(absent = '\(ConfigApiBlock.defaultId)'); declare it in that file's vaultFiles entry")
         }
         let configApi = try fixedByEntry("configApi", declared?.configApi, jsConfigApi)
         let policy = try fixedByEntry("accessPolicy", declared?.accessPolicy, jsPolicy)

@@ -347,9 +347,14 @@ plus `staticPins`, `require` and `ios.resolve`), parsed as strictly; a broken fi
   only from the entry:** one the entry leaves out is the library's default (the
   block's signing keys, `PLAIN`, `NONE`), and a JS value for it rejects `start`
   — so declare all three for a file that needs them (before this, a bare
-  `{ "key": … }` entry left them to the bundle). The bundle still decides
-  `storage` and `updateWithPins`, and `configApi`, `endpoint` and
-  `accessPolicy` unless the entry gives them; it can shorten `maxOfflineAge`
+  `{ "key": … }` entry left them to the bundle). **`configApi` too, when the
+  file declares more than one Config API:** a file without its own
+  `signaturePublicKey` is checked with the signing keys of the block
+  `configApi` names, so a release build takes a JS value only if it is
+  `default` (what an absent value means) — name the block in the entry. The
+  bundle still decides `storage` and `updateWithPins`, and `endpoint`,
+  `accessPolicy` (and `configApi` within those limits) unless the entry gives
+  them; it can shorten `maxOfflineAge`
   and turn `wipeWhenStale` on.
 
 `start` answers `nativeSecurityApplied: true` when the file was applied.
@@ -393,11 +398,13 @@ signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
   - **Before `start()`** — and after a start that failed — every `https`
     request through RN's networking fails (`PinVault has not started`): fail
     closed, as the native `getClient()` / `session()` before `init`.
-  - Plain `http` / `ws`: a debug build leaves it to RN (Metro). An Android
-    release build refuses it on `fetch`, `XMLHttpRequest`, `<Image>` and
-    `WebSocket` alike, before and after `start()` — a pin is checked in a
-    TLS handshake, and a plain request is checked by nothing. On iOS, ATS
-    decides.
+  - Plain `http` / `ws`: a debug build leaves it to RN (Metro). A release
+    build refuses it on `fetch`, `XMLHttpRequest`, `<Image>` and `WebSocket`
+    alike, to every host, before and after `start()` ("CLEARTEXT
+    communication not enabled for client") — a pin is checked in a TLS
+    handshake, and a plain request is checked by nothing. The only way out
+    is the native opt-out of the whole hook (below: the Android provider,
+    the iOS Info.plist key).
   - A `WebSocket` handshake that is redirected to another origin is not
     followed (Android; `onerror`), as in a browser.
   - Hosts without a pin entry are refused like everywhere else in PinVault.
@@ -442,7 +449,8 @@ signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
 - **iOS:** the plugin's `RNPinVaultURLRequestHandler` (an `RCTURLRequestHandler`)
   answers for `https` with `handlerPriority` 10; RCTNetworking picks the
   highest-priority handler, so RN's `RCTHTTPRequestHandler` (priority 0) only
-  sees plain `http`. Codegen registers it (`codegenConfig.ios.
+  sees plain `http` — in a debug build: a release build (no `DEBUG`) claims
+  plain `http` too and fails it. Codegen registers it (`codegenConfig.ios.
   modulesConformingToProtocol` in this package's `package.json`; `pod install`
   picks it up). Requests run on `PinVault.shared.session()` with the library's
   bounded read (`ios.reactNativeMaxResponseBytes`, default 50 MiB, at most
@@ -466,7 +474,9 @@ signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
   Android; without one it goes without and an attestation starts, so a
   reconnect has it. A
   WebSocket to a host that requires a client certificate fails on iOS (no
-  identity is presented); use it over TLS, or Android.
+  identity is presented); use it over TLS, or Android. In a release build a
+  `ws` socket fails (`onerror`) before it connects: the hook replaces
+  SocketRocket's `-open` too, and `start` checks both.
   Opt out natively with the Info.plist key `PinVaultPinReactNativeNetworking`
   = NO (both the https handler and the WebSocket hook).
   Keep App Transport Security on (no `NSAllowsArbitraryLoads`).

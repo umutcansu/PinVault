@@ -133,6 +133,37 @@ final class ReleaseFieldRulesTests: XCTestCase {
         }
     }
 
+    // Review 2026-11-17: an entry without configApi let Dart pick the block that serves AND
+    // vouches for the file (its signing keys verify a file without its own signature key).
+    func testWithTwoNativeBlocksDartCannotPickAVaultFilesConfigApiTheEntryLeavesOut() throws {
+        let second = #"{"id":"second","url":"https://h2.example/","bootstrapPins":[{"hostname":"h2.example","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKeys":["\#(key)"]}"#
+        func two(_ vault: String) throws -> NativeSecurity {
+            try NativeSecurity.parse(#"{"configApis":[{\#(block)},\#(second)],"vaultFiles":[\#(vault)]}"#, source: "pinvault_security.json")
+        }
+        func doc(_ fields: String) -> String {
+            #"{\#(api)},{"id":"second","url":"https://h2.example/"}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc"\#(fields)}]}"#
+        }
+        let bare = try two(#"{"key":"doc"}"#)
+        assertRefused(doc(#","configApi":"second""#), native: bare, "vaultFiles[0].configApi", "does not give configApi", "more than one Config API",
+                      "only from there", "declare it in that file's vaultFiles entry")
+        // The default block (what an absent value resolves to) may be repeated, or left out.
+        XCTAssertEqual(try parse(doc(#","configApi":"default""#), native: bare).config.vaultFiles["doc"]?.configApiId, "default")
+        XCTAssertEqual(try parse(doc(""), native: bare).config.vaultFiles["doc"]?.configApiId, "default")
+        // An entry that gives it: the entry's value, Dart may repeat it, a different one is refused.
+        let fixed = try two(#"{"key":"doc","configApi":"second"}"#)
+        XCTAssertEqual(try parse(doc(""), native: fixed).config.vaultFiles["doc"]?.configApiId, "second")
+        XCTAssertEqual(try parse(doc(#","configApi":"second""#), native: fixed).config.vaultFiles["doc"]?.configApiId, "second")
+        assertRefused(doc(#","configApi":"default""#), native: fixed, "vaultFiles[0].configApi", "native value is fixed")
+        // A debug build takes Dart's value as before.
+        XCTAssertEqual(try parse(doc(#","configApi":"second""#), native: bare, release: false).config.vaultFiles["doc"]?.configApiId, "second")
+        // One native block: nothing to choose between, Dart may name it.
+        let only = try NativeSecurity.parse(
+            #"{"configApis":[{"id":"main","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKeys":["\#(key)"]}],"vaultFiles":[{"key":"doc"}]}"#,
+            source: "pinvault_security.json")
+        let main = #"{"configApis":[{"id":"main","url":"https://h.example:8081/"}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc","configApi":"main"}]}"#
+        XCTAssertEqual(try parse(main, native: only).config.vaultFiles["doc"]?.configApiId, "main")
+    }
+
     // Review 2026-11-14 (K2): narrowing wantPinsFor took a pinned host's pins out of the signed
     // view; with managed trust roots that host is then accepted through the roots.
     func testWithManagedTrustRootsAReleaseBuildTakesWantPinsForFromTheFileOnly() throws {

@@ -149,6 +149,35 @@ final class ReleaseFieldRulesTests: XCTestCase {
         }
     }
 
+    // Review 2026-11-17: a vault file without its own signaturePublicKey is checked with the keys
+    // of the block its configApi names; with two declared blocks a bare entry let JS pick that block.
+    func testWithSeveralNativeBlocksAReleaseBuildTakesAVaultFilesConfigApiFromJSOnlyWhenItNamesTheDefaultBlock() throws {
+        let second = #",{"id":"second","url":"https://h2.example/","bootstrapPins":[{"hostname":"h2.example","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKeys":["\#(key)"]}"#
+        func two(_ vault: String) throws -> NativeSecurity {
+            try NativeSecurity.parse(#"{"configApis":[{\#(block)}\#(second)],"vaultFiles":[\#(vault)]}"#, source: "pinvault_security.json")
+        }
+        let both = #"\#(api)},{"id":"second","url":"https://h2.example/"}]"#
+        func doc(_ fields: String) -> String { #"{\#(both),"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc"\#(fields)}]}"# }
+        let bare = try two(#"{"key":"doc"}"#)
+        assertRefused(doc(#","configApi":"second""#), bare,
+                      "vaultFiles[0].configApi", "declares more than one Config API", "does not give configApi", "only from there", "vaultFiles entry")
+        // The default block (what an absent value resolves to) cannot select another block.
+        XCTAssertEqual(try parse(doc(#","configApi":"default""#), bare).config.vaultFiles["doc"]?.configApiId, "default")
+        XCTAssertEqual(try parse(doc(""), bare).config.vaultFiles["doc"]?.configApiId, "default")
+        // An entry that gives configApi keeps today's rule: the entry wins, another JS value is refused.
+        let fixed = try two(#"{"key":"doc","configApi":"second"}"#)
+        XCTAssertEqual(try parse(doc(""), fixed).config.vaultFiles["doc"]?.configApiId, "second")
+        XCTAssertEqual(try parse(doc(#","configApi":"second""#), fixed).config.vaultFiles["doc"]?.configApiId, "second")
+        assertRefused(doc(#","configApi":"default""#), fixed, "vaultFiles[0].configApi", "native value is fixed")
+        // A debug build takes JS's value as before.
+        XCTAssertEqual(try parse(doc(#","configApi":"second""#), bare, release: false).config.vaultFiles["doc"]?.configApiId, "second")
+        // One native block: JS can only name that block, whatever its id.
+        let mainBlock = block.replacingOccurrences(of: #""id":"default""#, with: #""id":"main""#)
+        let one = try NativeSecurity.parse(#"{"configApis":[{\#(mainBlock)}],"vaultFiles":[{"key":"doc"}]}"#, source: "pinvault_security.json")
+        let js = #"{"configApis":[{"id":"main","url":"https://h.example:8081/"}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc","configApi":"main"}]}"#
+        XCTAssertEqual(try parse(js, one).config.vaultFiles["doc"]?.configApiId, "main")
+    }
+
     // Review 2026-11-14 (K2): narrowing wantPinsFor took a pinned host's pins out of the signed
     // view; with managed trust roots that host is then accepted through the roots.
     func testWithManagedTrustRootsAReleaseBuildTakesWantPinsForFromTheFileOnly() throws {

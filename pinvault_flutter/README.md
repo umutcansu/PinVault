@@ -129,9 +129,13 @@ turned off. **In a release build `signaturePublicKey`, `encryption` and
 library's default (the block's signing keys, `PLAIN`, `NONE`), and a Dart value
 for it fails `start` with `E_INVALID_CONFIG` — so declare all three for a file
 that needs them (before this, a bare `{ "key": … }` entry left them to the
-bundle). Dart still decides `storage` and `updateWithPins`, and `configApi`,
-`endpoint` and `accessPolicy` unless the entry gives them; it can shorten
-`maxOfflineAge` and turn `wipeWhenStale` on.
+bundle). **`configApi` too, when the file declares more than one Config
+API:** a file without its own `signaturePublicKey` is checked with the signing
+keys of the block `configApi` names, so a release build takes a Dart value
+only if it is `default` (what an absent value means) — name the block in the
+entry. Dart still decides `storage` and `updateWithPins`, and `endpoint`,
+`accessPolicy` (and `configApi` within those limits) unless the entry gives
+them; it can shorten `maxOfflineAge` and turn `wipeWhenStale` on.
 
 **`wantPinsFor`** (the hosts whose pins a block asks for) is fixed where the
 file's block gives it. Where the file says `require.managedTrustRoots: true`, a

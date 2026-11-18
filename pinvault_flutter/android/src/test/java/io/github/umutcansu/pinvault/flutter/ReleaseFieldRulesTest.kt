@@ -136,6 +136,35 @@ class ReleaseFieldRulesTest {
         }
     }
 
+    // Review 2026-11-17: an entry without configApi let Dart pick the block that serves AND
+    // vouches for the file (its signing keys verify a file without its own signature key).
+    @Test fun `with two native blocks Dart cannot pick a vault file's Config API the entry leaves out`() {
+        val second = """{"id":"second","url":"https://h2.example/","bootstrapPins":[{"hostname":"h2.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}"""
+        fun two(vault: String) =
+            NativeSecurity.parse("""{"configApis":[{$block},$second],"vaultFiles":[$vault]}""", "assets/pinvault_security.json")
+        fun doc(fields: String) =
+            """{$api},{"id":"second","url":"https://h2.example/"}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc"$fields}]}"""
+        val bare = two("""{"key":"doc"}""")
+        refused(doc(""","configApi":"second""""), bare, "vaultFiles[0].configApi", "does not give configApi", "more than one Config API",
+            "only from there", "declare it in that file's vaultFiles entry")
+        // The default block (what an absent value resolves to) may be repeated, or left out.
+        assertEquals("default", parse(doc(""","configApi":"default""""), bare).config.vaultFiles.getValue("doc").configApiId)
+        assertEquals("default", parse(doc(""), bare).config.vaultFiles.getValue("doc").configApiId)
+        // An entry that gives it: the entry's value, Dart may repeat it, a different one is refused.
+        val fixed = two("""{"key":"doc","configApi":"second"}""")
+        assertEquals("second", parse(doc(""), fixed).config.vaultFiles.getValue("doc").configApiId)
+        assertEquals("second", parse(doc(""","configApi":"second""""), fixed).config.vaultFiles.getValue("doc").configApiId)
+        refused(doc(""","configApi":"default""""), fixed, "vaultFiles[0].configApi", "native value is fixed")
+        // A debug build takes Dart's value as before.
+        assertEquals("second", parse(doc(""","configApi":"second""""), bare, release = false).config.vaultFiles.getValue("doc").configApiId)
+        // One native block: nothing to choose between, Dart may name it.
+        val only = NativeSecurity.parse(
+            """{"configApis":[{"id":"main","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],"vaultFiles":[{"key":"doc"}]}""",
+            "assets/pinvault_security.json")
+        val main = """{"configApis":[{"id":"main","url":"https://h.example:8081/"}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc","configApi":"main"}]}"""
+        assertEquals("main", parse(main, only).config.vaultFiles.getValue("doc").configApiId)
+    }
+
     // Review 2026-11-14 (K2): narrowing wantPinsFor took a pinned host's pins out of the signed
     // view; with managed trust roots that host is then accepted through the roots.
     @Test fun `with managed trust roots a release build takes wantPinsFor from the file only`() {

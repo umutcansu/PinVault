@@ -11,6 +11,11 @@
 //   sessions never follow one; the 3xx is the answer);
 // - no cookies and no cache (the library's sessions are ephemeral, without a
 //   cookie store or URL cache);
+// - a release build (`#if DEBUG` off) refuses plain http and ws, every host,
+//   before and after `start()` (`cleartextRefused`); a debug build leaves
+//   them to RN (Metro, the dev tools). No switch other than the Info.plist
+//   opt-out of the whole hook (`PinVaultPinReactNativeNetworking` = NO), as
+//   Android's only way out is removing its networking provider;
 // - the answer is bounded (`maxResponseBytes`, default 50 MiB): the library
 //   stops reading past it.
 //
@@ -50,9 +55,47 @@ public enum ReactNetworking {
         }
     }
 
-    /// Only https: plain http stays with RN's own handler (ATS refuses it unless the app allows it).
-    public static func handles(_ request: URLRequest) -> Bool {
-        request.url?.scheme?.lowercased() == "https"
+    /// https always. Plain http only with [httpsOnly] (a release build): it is
+    /// claimed so that it can be refused (``prepare``) instead of going to RN's
+    /// own, unpinned handler. Without it (debug: Metro, the dev tools) plain
+    /// http stays with RN's handler (ATS refuses it unless the app allows it).
+    /// Other schemes (file, data, blob) are never claimed.
+    public static func handles(_ request: URLRequest, httpsOnly: Bool = false) -> Bool {
+        switch request.url?.scheme?.lowercased() {
+        case "https": return true
+        case "http": return httpsOnly
+        default: return false
+        }
+    }
+
+    /// The refusal of plain http / ws through React Native's networking in a
+    /// release build — Android's rule (PinVaultNetworking.kt: no cleartext
+    /// connection spec on any client its hooks touch, before and after
+    /// `start()`, every host): nothing checks a pin on a request that goes
+    /// out in the clear. OkHttp's wording.
+    public static func cleartextRefused() -> NSError {
+        error(
+            "UnknownServiceException",
+            "CLEARTEXT communication not enabled for client: a release build refuses plain http / ws through React Native's networking"
+        )
+    }
+
+    /// RNPinVaultURLRequestHandler's `canHandleRequest:`. [enabled] = the
+    /// Info.plist switch `PinVaultPinReactNativeNetworking` (NO: nothing is
+    /// claimed, http and https stay with RN — Android's "remove the provider").
+    public static func claims(_ request: URLRequest, enabled: Bool, httpsOnly: Bool) -> Bool {
+        enabled && handles(request, httpsOnly: httpsOnly)
+    }
+
+    /// The error a WebSocket to [url] fails with before it connects
+    /// (RNPinVaultWebSocketPinning.mm), nil when it may connect: with
+    /// [httpsOnly] (a release build) every URL SocketRocket would open without
+    /// TLS is refused (its SRURLRequiresSSL: only wss / https get TLS).
+    /// [enabled] = the Info.plist switch, which also leaves the hook out.
+    public static func webSocketRefusal(_ url: URL?, enabled: Bool, httpsOnly: Bool) -> NSError? {
+        guard enabled, httpsOnly else { return nil }
+        let scheme = url?.scheme?.lowercased()
+        return scheme == "wss" || scheme == "https" ? nil : cleartextRefused()
     }
 
     /// The error RN hands to JS (`fetch` rejects with "Network request failed").
@@ -90,7 +133,11 @@ public enum ReactNetworking {
     ) -> ReactNetworkingTask {
         let task = ReactNetworkingTask(callbacks)
         let sent = Int64(request.httpBody?.count ?? 0)
+        // Only https is sent: anything else that reached this handler was
+        // claimed to be refused (``handles(_:httpsOnly:)``), before start or after.
+        let https = request.url?.scheme?.lowercased() == "https"
         task.body = {
+            guard https else { throw ReactNetworking.cleartextRefused() }
             guard let send else {
                 throw ReactNetworking.error(
                     "IllegalStateException", "PinVault has not started: https requests are refused until start() returns"

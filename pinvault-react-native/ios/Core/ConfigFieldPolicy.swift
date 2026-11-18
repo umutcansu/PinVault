@@ -81,7 +81,10 @@ public enum ConfigFieldPolicy {
         put(.tighten, "\(vault).maxOfflineAge", "\(vault).maxOfflineAge.amount", "\(vault).maxOfflineAge.unit", "\(vault).wipeWhenStale")
         // A declared key. A relative endpoint without `..`, a declared Config API and the access
         // policy (the server decides who may download; the token goes to the block's pinned URL
-        // only): fixed where the file's entry gives them, JS's otherwise.
+        // only): fixed where the file's entry gives them, JS's otherwise — except configApi, which
+        // a release build with a native file declaring more than one block takes from JS only when
+        // it names the default block (the one an absent value resolves to): the block named also
+        // vouches for a file without its own signaturePublicKey.
         put(.checked, "\(vault).key", "\(vault).endpoint", "\(vault).configApi", "\(vault).accessPolicy")
         // Where the copy is kept and when it is fetched.
         put(.free, "\(vault).storage", "\(vault).updateWithPins")

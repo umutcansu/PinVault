@@ -76,7 +76,10 @@ public enum ConfigFieldPolicy {
         put(.tighten, "\(vault).maxOfflineAge", "\(vault).maxOfflineAge.amount", "\(vault).maxOfflineAge.unit", "\(vault).wipeWhenStale")
         // A declared key. A relative endpoint without `..`, a declared Config API and the access
         // policy (the server decides who may download; the token goes to the block's pinned URL
-        // only): fixed where the file's entry gives them, Dart's otherwise.
+        // only): fixed where the file's entry gives them, Dart's otherwise — except configApi, which
+        // picks the block that vouches for the file: where the entry leaves it out and the file
+        // declares more than one block, Dart may only name the default block ("default", what an
+        // absent value resolves to); any other value is refused.
         put(.checked, "\(vault).key", "\(vault).endpoint", "\(vault).configApi", "\(vault).accessPolicy")
         // Where the copy is kept and when it is fetched.
         put(.free, "\(vault).storage", "\(vault).updateWithPins")
