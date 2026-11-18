@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.12.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.12.1-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,7 +38,12 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.12.0** — fixes from a second security review and a
+> **Latest release: 2.12.1** — the server starts with
+> `-XX:-UseBASE64Intrinsics` against CVE-2026-114938 ("Java4Shell", OpenJDK's
+> Base64 decoder on x86-64 CPUs with AVX-512 VBMI); a server started some other
+> way needs the flag too (SECURE_OPERATIONS.md). No library or bridge changes.
+>
+> **2.12.0** — fixes from a second security review and a
 > scanner round (OWASP ZAP, nuclei, testssl, MobSF): a deleted vault file takes
 > its tokens with it, accepted renewal requests never renew again, a client
 > certificate that expired after the handshake is refused per request, every
@@ -152,7 +157,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.12.0")
+    implementation("io.github.umutcansu:pinvault:2.12.1")
 }
 ```
 
@@ -165,7 +170,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.12.0")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.12.1")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

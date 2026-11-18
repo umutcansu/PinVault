@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.12.1 — 2026-11-18
+
+No Flutter changes. Follows the 2.12.1 core, whose only change is on the
+server (CVE-2026-114938 mitigation).
+
 ## 2.12.0 — 2026-11-18
 
 Security review 2026-11-17. Needs the 2.12.0 core.

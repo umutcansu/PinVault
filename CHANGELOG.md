@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.12.1 — 2026-11-18 — CVE-2026-114938 (Java4Shell): the server starts with the HotSpot Base64 intrinsic off
 
 ### Server
 

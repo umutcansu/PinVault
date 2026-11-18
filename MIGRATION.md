@@ -4,6 +4,14 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.12.0 to 2.12.1
+
+Nothing changes for apps. The server's start script now passes
+`-XX:-UseBASE64Intrinsics` (CVE-2026-114938, "Java4Shell"). If you run the
+server some other way than the image or `installDist` (your own `java -jar`,
+another image, a service manager), add that flag yourself or run a JRE that
+carries the fix. See SECURE_OPERATIONS.md.
+
 ## Upgrading from 2.11.0 to 2.12.0
 
 Fixes from the 2026-11-17 security review and a scanner round. What can stop an
