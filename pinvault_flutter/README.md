@@ -12,7 +12,7 @@ Nothing here stores anything, and nothing here logs outside development builds.
 
 ```yaml
 dependencies:
-  pinvault_flutter: ^2.11.0
+  pinvault_flutter: ^2.12.0
 ```
 
 Flutter 3.44 or later (Dart 3.12), Android API 24, iOS 16.
@@ -34,7 +34,7 @@ the plugin brings PinVault from its git tag. With CocoaPods, add PinVault to
 the `Runner` target of the Podfile — it is not on CocoaPods trunk:
 
 ```ruby
-pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.11.0'
+pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.12.0'
 ```
 
 For `schedulePeriodicUpdates` to run in the background, list

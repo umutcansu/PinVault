@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.12.0 — 2026-11-18 — review 2026-11-17 and a scanner round: vault tokens follow their file, renewal requests are single-use for good, expiry and CN checked per request, IMMEDIATE transactions, TLS hardening, stored copies below the version floor refused, bridges take a vault file's Config API from the native file
 
 Review 2026-11-17: fixes in the server, both libraries and the four bridges, and
 tests that close a class of mistake instead of one case of it.

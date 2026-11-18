@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.12.0 — 2026-11-18
+
+Security review 2026-11-17. Needs the 2.12.0 core.
+
+- **Breaking (release builds with a native security file declaring more than
+  one Config API): a vault entry without `configApi` takes a Dart `configApi`
+  only if it is `default`.** A file without its own `signaturePublicKey` is
+  checked with the signing keys of the block `configApi` names; name the block
+  in the entry.
+
 ## 2.11.0 — 2026-11-15
 
 Security review 2026-11-14.

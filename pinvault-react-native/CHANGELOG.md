@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.12.0 — 2026-11-18
+
+Security review 2026-11-17. Needs the 2.12.0 core.
+
+- **Breaking (iOS release builds): plain `http://` and `ws://` through React
+  Native's own networking are refused**, as on Android since 2.11.0: every
+  host, before and after `start()`. `fetch` fails with `UnknownServiceException`
+  ("CLEARTEXT communication not enabled for client"); a `ws://` socket fails
+  (`onerror`) before it connects. The way out is the Info.plist switch
+  `PinVaultPinReactNativeNetworking = NO`. Debug builds are unchanged.
+- **Breaking (release builds with a native security file declaring more than
+  one Config API): a vault entry without `configApi` takes a JS `configApi`
+  only if it is `default`.** A file without its own `signaturePublicKey` is
+  checked with the signing keys of the block `configApi` names; name the block
+  in the entry.
+
 ## 2.11.0 — 2026-11-15
 
 Security review 2026-11-14.

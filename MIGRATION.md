@@ -4,6 +4,47 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.11.0 to 2.12.0
+
+Fixes from the 2026-11-17 security review and a scanner round. What can stop an
+app, a server or a script that worked on 2.11.0:
+
+**React Native on iOS — release builds refuse `http://` and `ws://`**
+
+React Native's own `fetch`, `<Image>` and `WebSocket` refuse plain `http://` and
+`ws://` in a release build, as on Android since 2.11.0. Move such requests to
+`https` / `wss`, or set `PinVaultPinReactNativeNetworking = NO` in Info.plist
+(it turns PinVault's networking hooks off altogether). Debug builds are unchanged.
+
+**React Native and Flutter — name the Config API of a vault file in the native file**
+
+In a release build whose native security file declares more than one Config
+API, a `vaultFiles` entry without `configApi` accepts a JS/Dart `configApi`
+only if it is `default`; anything else fails `start`. Add `"configApi"` to the
+entry. Files with a single Config API, entries that already name it and debug
+builds are unchanged.
+
+**Server — a token needs its file, and a few answers changed**
+
+- `POST /api/v1/config-apis/{id}/vault/{key}/tokens` answers `404
+  vault_file_not_found` until the file is uploaded; deleting a file revokes its
+  tokens. Scripts that issued tokens before uploading must upload first.
+- On mTLS listeners a certificate that expired after the handshake gets `403
+  certificate_expired` (renew; the identity is kept) and a verified certificate
+  without a CN gets `403 client_identity_required`. Backends written to
+  `SERVER_IMPLEMENTATION_GUIDE.md` may want to answer the same.
+- Malformed admin input answers 400 where it answered 500; starting a Config API
+  on a port in use answers 409.
+- TLS listeners refuse client-initiated renegotiation and offer no SHA-1 / SHA-224
+  signature schemes. A client limited to those was not supported before either.
+- Migration V33 (`client_renewal_csrs`) runs on start.
+
+**Operators — do not open the live database from another kernel in WAL mode**
+
+Reading `pinvault.db` with `sqlite3` on a Mac through a Docker Desktop bind
+mount (or from a network share) can crash the server (SIGBUS). Stop the
+container first or run with `DB_JOURNAL_MODE=delete`; see SECURE_OPERATIONS.md.
+
 ## Upgrading from 2.10.0 to 2.11.0
 
 Fixes from the 2026-11-14 security review. Four things can stop an app or a
