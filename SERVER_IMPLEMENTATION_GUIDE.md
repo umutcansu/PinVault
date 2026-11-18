@@ -1239,6 +1239,8 @@ codes a client may see:
 | `400` | `EncodedPathGuard`: the path contains `%2F`, `%5C`, `%2E`, `%25` (any case) or a backslash (every listener) |
 | `411` / `413` | `ClientBodyLimit`: a device endpoint's body has no declared length, or is over 64 KB |
 | `403 reenroll_required` | `RevocationGate`: the client certificate's identity is revoked (mTLS listeners, every request) |
+| `403 certificate_expired` | `RevocationGate`: the certificate was valid at the handshake but has expired since (a kept-open connection or a resumed TLS session). Deliberately NOT `reenroll_required`: the device renews (the recovery door), it does not give up its identity |
+| `403 client_identity_required` | `RevocationGate`: a verified client certificate that names no client id (no CN) — e.g. a leaf signed by an old per-certificate trust anchor. Refused rather than served as nobody |
 | `403 device_identity_mismatch` | `DeviceIdBinding`: `X-Device-Id` does not belong to the client certificate (mTLS listeners) |
 | `429 rate_limited` | Per-address or per-identity limits (enrollment, renewal, attestation, vault downloads) |
 

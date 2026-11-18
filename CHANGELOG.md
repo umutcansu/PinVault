@@ -2,9 +2,133 @@
 
 ## Unreleased
 
-Server and sample host only; the libraries are unchanged since 2.11.0.
+Review 2026-11-17: fixes in the server, both libraries and the four bridges, and
+tests that close a class of mistake instead of one case of it.
 
 ### Server
+
+- **A deleted vault file takes its tokens with it.** Deleting a file left its tokens
+  in place, and a token could be issued for a file that did not exist: whatever was
+  uploaded under the same name later opened with them. The delete now revokes the
+  file's tokens (the audit entry says how many), and `POST …/vault/{key}/tokens`
+  answers `404 vault_file_not_found` until the file is uploaded.
+- **A device id that is another identity's client id is refused.** "One active
+  identity per device" counted a client id as a held device id only for rows without
+  a device id of their own. An enrollment naming another active identity's client id
+  as its `deviceUid` went through and then passed that identity's `X-Device-Id`
+  binding. It now gets `409 device_already_enrolled`.
+- **Pin saves and vault uploads are IMMEDIATE transactions.** A pin save read (the
+  first snapshot, one watermark per host) before it wrote, on a deferred transaction:
+  under WAL a commit by any other connection in between failed it with
+  `SQLITE_BUSY_SNAPSHOT`, whatever the busy timeout — under device load a pin change
+  answered 500. A vault upload read the version and wrote it as two steps: two
+  uploads of one file at the same time got the same version with different content,
+  and `PUT …/policy` could undo an upload that landed in between. Every explicit
+  transaction in the stores now takes the write lock up front.
+- **A verified client certificate without a client id is refused.** `RevocationGate`
+  let a certificate with no CN pass as nobody (uploads must carry one, a leaf signed by
+  an old per-certificate anchor need not): `403 client_identity_required`.
+- **An mTLS Config API does not start without a client truststore.** It used to come
+  up as plain TLS under the same name.
+- **A client certificate that expired after the handshake is refused per request.** A
+  connection kept open (or a resumed TLS session) outlived its certificate:
+  `403 certificate_expired` (not `reenroll_required`: the device renews, it does not
+  start over).
+- **An accepted renewal request never renews again.** Only the last accepted CSR was
+  remembered, as the hash of its whole DER: an older copy renewed again once a newer
+  renewal had gone through, and so did the same request with its ECDSA signature
+  written as (r, n − s). Every accepted request is now kept (`client_renewal_csrs`,
+  V33) under a canonical key (signed part + signature in one form), refused in the
+  statement that records it, and dropped when the identity is forgotten.
+- **The E2E suite refuses a host whose database is in WAL mode.** It reads the live
+  database from the Mac over the bind mount; in WAL mode that crashed the iOS host with
+  SIGBUS (2026-11-18). `sample-e2e/lib/journalGuard.js` checks the container's
+  `DB_JOURNAL_MODE` at start, before every scenario and for the fresh host.
+  `SECURE_OPERATIONS.md` says the same for operators: never open the live database from
+  another kernel while it is in WAL mode.
+- **Scanner round (OWASP ZAP active + baseline, nuclei, testssl, MobSF; 2026-11-18).**
+  No injection and nothing exploitable; what they found is fixed:
+  - TLS: client-initiated renegotiation is refused and SHA-1 / SHA-224 signature
+    schemes are no longer offered (`TlsHardening`, set before any listener starts;
+    a value in `JAVA_TOOL_OPTIONS` wins). Certificates this server generates get a
+    random serial (it was the millisecond clock).
+  - Malformed admin input answers 400, not 500: a host name that is not one is refused
+    before a key pair is generated for it (it used to reach the certificate subject
+    parser first), a mock-host port or `mtls` of the wrong kind, an unknown vault
+    access policy or encryption. Starting a Config API on a port in use answers 409
+    and no longer echoes the exception text.
+  - Headers: `Cross-Origin-Resource-Policy` on every listener; the panel also sends
+    `Cross-Origin-Embedder-Policy`, `Cross-Origin-Opener-Policy` and
+    `X-Permitted-Cross-Domain-Policies`; the recovery door now sends the device
+    listeners' headers (it sent none).
+- **`ADMIN_WRITES_FROZEN` no longer blocks taking trust away.** The flag suspends a
+  server whose licence lapsed, set by someone other than its operator; a stolen device
+  could not be revoked while it was on. Revoking a client identity, stopping an
+  enrollment code, turning code-less applications off and rejecting a waiting device
+  now go through; "forget", token-key changes and pin restores stay frozen.
+- **`DB_SYNCHRONOUS` reaches the container.** Neither compose file passed it, so a
+  value in `.env` never arrived. Unset still means the server's default (`normal`
+  under WAL); `SECURE_OPERATIONS.md` now says what `normal` can lose on a crash.
+- **Deleting a Config API closes the devices still waiting to be let into it.** Its
+  pending enrollment requests are rejected, so they are not approved later into a new
+  API that took the same id. Decided requests stay as history.
+- **`StoreInvariantsTest`.** Fails on a transaction that is not on
+  `immediateConnection()`, and on a table with a `config_api_id`, vault-file or
+  `client_id` column that the purge / file delete / "forget" does not list with what
+  happens to its rows. Read from the migrated schema, so a new migration has to say.
+- **`HostRulesParityTest`** (server, Android, iOS): one vector file
+  (`pinvault-ios/Tests/PinVaultTests/Fixtures/parity/host-rules.json`) of host
+  patterns, pins and host matching that all three implementations are held to.
+
+### Android and iOS libraries
+
+- **"Not modified" confirms only the version that was asked (user_auth files).** With
+  a newer copy waiting to be opened, the server is asked with that copy's version. Its
+  304 used to refresh the confirmation of the verified copy too, so one unverified
+  envelope with a high version, served once, kept the old copy "fresh" for as long as
+  the genuine server answered 304 (`maxOfflineAge` never ran out). The 304 now counts
+  for the waiting copy alone.
+- **A waiting copy can be opened after the stored one went stale; a stale copy is
+  never what comes out.** `unlockFile` shows the prompt when the stored copy is past
+  its offline lifetime but a copy the server served within it is waiting. What opened
+  is checked again afterwards: a waiting copy that passed its check is the stored
+  copy by then, confirmed as of the time it was served; if it failed and the old copy
+  opened instead, the result is `Stale`.
+- **A stored vault copy below the version floor is refused when it is read.** The floor
+  was compared at download only. An older signed copy put back on its own, with its
+  older signature entry, verified and was handed out (`loadFile`, and `unlockFile` for
+  server-sealed copies, where the floor is read before the unlock raises it). It is now
+  `INTEGRITY_FAILED` and deleted; the floor stays. Rolling back the whole storage,
+  floor included, is still out of reach of the device.
+- **A huge `expiredConfigGrace` no longer overflows.** `expiresAt + grace` wrapped
+  negative on Android (every config "expired", handshakes refused) and trapped on iOS
+  (a crash as soon as a config was loaded). The deadline saturates
+  (`ConfigExpiry.deadline`); sane values are unchanged.
+- **Android: a hand-written `Cookie` does not follow a cached cross-origin redirect.**
+  With a `Cache` on an `applyTo` client and an interceptor added afterwards that writes
+  `Cookie`, a cached 301/308 from a pinned origin to another trusted origin carried it
+  there on the second call. On a hop to another origin `Cookie` is now kept only when it
+  is exactly what the cookie jar made for that hop.
+
+### React Native iOS
+
+- **A release build refuses plain `http://` and `ws://` through React Native's own
+  networking**, as React Native Android already did: every host, before and after
+  `start()`. A `ws://` socket fails (`onerror`) before it connects. The way out is the
+  existing Info.plist switch `PinVaultPinReactNativeNetworking = NO`. An app that uses
+  cleartext on purpose in a release build breaks with this version.
+
+### Bridges (React Native and Flutter, Android and iOS)
+
+- **A release build takes a vault file's `configApi` from JS/Dart only where it cannot
+  pick another block.** A vault file without its own `signaturePublicKey` is checked
+  with the signing keys of the block `configApi` names. With a native security file
+  that declares more than one Config API and a vault entry that gives no `configApi`,
+  a value from JS/Dart other than `default` is refused: declare `configApi` in the
+  entry. Single-block files, entries that give `configApi`, debug builds and builds
+  without a native file are unchanged.
+
+### Server (load test follow-up)
 
 - **One SQLite connection stays open (WAL).** In WAL mode, closing the last connection
   checkpoints the whole WAL and deletes it. With a connection per store call and few
