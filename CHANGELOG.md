@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Server
+
+- **CVE-2026-114938 ("Java4Shell"): the HotSpot Base64 intrinsic is off.** A heap
+  overflow in OpenJDK's Base64 decoder intrinsic on x86-64 CPUs with AVX-512 VBMI can be
+  reached without authentication through any Base64 the server decodes (enrollment and
+  renewal CSRs, attestation). The start script now passes `-XX:-UseBASE64Intrinsics`
+  (`applicationDefaultJvmArgs`, so a `JAVA_OPTS` of the operator's own keeps it); the
+  plain Java decoder is used instead. The images run Temurin 17.0.20, inside the affected
+  range; the base image moves to a patched JRE once one is published, and the flag goes
+  with it. ARM hosts never take that code path. See SECURE_OPERATIONS.md.
+
 ## 2.12.0 — 2026-11-18 — review 2026-11-17 and a scanner round: vault tokens follow their file, renewal requests are single-use for good, expiry and CN checked per request, IMMEDIATE transactions, TLS hardening, stored copies below the version floor refused, bridges take a vault file's Config API from the native file
 
 Review 2026-11-17: fixes in the server, both libraries and the four bridges, and

@@ -6,6 +6,14 @@ plugins {
 
 application {
     mainClass.set("com.example.pinvault.server.MainKt")
+    // CVE-2026-114938 ("Java4Shell"): heap overflow in HotSpot's Base64 decoder
+    // intrinsic on x86-64 CPUs with AVX-512 VBMI. The server Base64-decodes input
+    // from unauthenticated callers (enrollment and renewal CSRs, attestation),
+    // so the intrinsic is off until every runtime is patched; the plain Java
+    // decoder is used instead. In the start script, so a JAVA_OPTS of the
+    // operator's own does not drop it. Remove once the base image's JRE carries
+    // the fix.
+    applicationDefaultJvmArgs = listOf("-XX:-UseBASE64Intrinsics")
 }
 
 repositories {
