@@ -210,9 +210,12 @@ final class VaultFileGuardTests: XCTestCase {
         api.answer(signedV1("flags", 2, Data(utf8: "new")))
         _ = await f.fetch(file())
 
+        // Rolled back as a whole: the floor of that time too.
         storage.setBlob("flags", oldBlob)
         storage.setVersion("flags", 1)
         meta.saveSignatures("flags", oldSignatures)
+        meta.wipeVersionFloors()
+        meta.raiseVersionFloor(configApiId: "default", key: "flags", to: 1)
 
         XCTAssertEqual(f.load(file()), Data(utf8: "old"))
         guard case .updated = await f.fetch(file()) else { return XCTFail("…until the server is asked again") }

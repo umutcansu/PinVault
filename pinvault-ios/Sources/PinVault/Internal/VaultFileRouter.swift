@@ -199,7 +199,17 @@ final class VaultFileRouter: Sendable {
             }
 
             if response.notModified {
-                vaultGuard?.confirmed(file)
+                // "Not modified" answers the version that was asked. Asked with
+                // the pending copy's version, it says nothing about the verified
+                // copy: one unverified envelope with a high version used to make
+                // the genuine server answer 304 from then on, and every 304 kept
+                // the old copy fresh. It counts for the pending copy, which is
+                // checked when it is opened.
+                if pendingVersion > currentVersion && askedVersion == pendingVersion {
+                    vaultGuard?.pendingStored(file)
+                } else {
+                    vaultGuard?.confirmed(file)
+                }
                 return .alreadyCurrent(key: file.key, version: knownVersion)
             }
 

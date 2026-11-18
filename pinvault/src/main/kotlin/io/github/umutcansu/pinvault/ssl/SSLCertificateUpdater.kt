@@ -110,7 +110,7 @@ internal class SSLCertificateUpdater(
 
     /** True when [config] is past its `expiresAt` plus the grace. Configs without one never expire. */
     private fun isExpired(config: CertificateConfig): Boolean =
-        config.expiresAt > 0L && (trustedClock?.now() ?: clock()) > config.expiresAt + expiredConfigGraceMs
+        config.expiresAt > 0L && (trustedClock?.now() ?: clock()) > ConfigExpiry.deadline(config.expiresAt, expiredConfigGraceMs)
 
     private fun expiredResult(config: CertificateConfig, cause: Exception?): InitResult.Failed {
         val error = io.github.umutcansu.pinvault.model.ConfigExpiredException(config.expiresAt, cause = cause)

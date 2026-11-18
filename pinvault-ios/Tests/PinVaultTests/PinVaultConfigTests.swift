@@ -225,6 +225,12 @@ final class PinVaultConfigTests: XCTestCase {
         }
     }
 
+    func testAHugeExpiredConfigGraceIsKeptAndItsDeadlineSaturates() throws {
+        let grace = try api("https://api.example.com").expiredConfigGrace(.max, .days).build().expiredConfigGraceMs
+        XCTAssertEqual(grace, .max)
+        XCTAssertEqual(ConfigExpiry.deadline(1_800_000_000_000, grace), .max)
+    }
+
     func testRequireCaTrustKeepsHostPatternsLowercasedAndOnce() throws {
         let config = try api("https://api.example.com")
             .requireCaTrust("API.example.com", "*.example.org", "pay.example.com:8443")

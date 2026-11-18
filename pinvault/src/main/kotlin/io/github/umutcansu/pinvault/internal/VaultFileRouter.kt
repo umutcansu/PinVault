@@ -188,7 +188,14 @@ internal class VaultFileRouter(
             }
 
             if (response.notModified) {
-                guard?.confirmed(file)
+                // "Not modified" answers the version that was asked. Asked with
+                // the pending copy's version, it says nothing about the verified
+                // copy: one unverified envelope with a high version used to make
+                // the genuine server answer 304 from then on, and every 304
+                // kept the old copy fresh (maxOfflineAge never ran out). It
+                // counts for the pending copy, which is checked when it is opened.
+                if (pendingVersion > currentVersion && askedVersion == pendingVersion) guard?.pendingStored(file)
+                else guard?.confirmed(file)
                 return VaultFileResult.AlreadyCurrent(file.key, knownVersion)
             }
 

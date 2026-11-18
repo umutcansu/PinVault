@@ -319,8 +319,9 @@ class VaultFileGuardTest {
 
     @Test
     fun `an older signed copy put back with its own signature is the limit of what a device can check`() = runTest {
-        // Documented, not hidden: storage rolled back as a whole verifies. The
-        // offline lifetime bounds it, and the next fetch replaces it.
+        // Documented, not hidden: storage rolled back as a whole — the floor
+        // of that time included — verifies. The offline lifetime bounds it,
+        // and the next fetch replaces it.
         val f = Fixture(block())
         response = signedV1("flags", 1, "old".toByteArray())
         f.fetch(file())
@@ -332,10 +333,37 @@ class VaultFileGuardTest {
         storage.blobs["flags"] = oldBlob
         storage.versions["flags"] = 1
         meta.saveSignatures("flags", oldSignatures)
+        meta.wipeVersionFloors()
+        meta.raiseVersionFloor("default", "flags", 1)
 
         assertArrayEquals("old".toByteArray(), f.load(file()))
         assertTrue("…until the server is asked again", f.fetch(file()) is VaultFileResult.Updated)
         assertArrayEquals("new".toByteArray(), f.load(file()))
+    }
+
+    @Test
+    fun `an older signed copy put back on its own is refused below the version floor`() = runTest {
+        // Review 2026-11-17: the entries are bound to their names only, so the
+        // v3 copy and its own sig_ entry can come back without the floor.
+        val f = Fixture(block())
+        response = signedV1("flags", 3, "flags-v3".toByteArray())
+        f.fetch(file())
+        val oldBlob = storage.blobs.getValue("flags")
+        val oldSignatures = meta.signatures("flags")
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        f.fetch(file())
+        assertEquals(5, meta.versionFloor("default", "flags"))
+
+        storage.blobs["flags"] = oldBlob
+        storage.versions["flags"] = 3
+        meta.saveSignatures("flags", oldSignatures)
+
+        val read = f.guard.load(file(), storage, f.router.storedVerifier(file()))
+        assertEquals(VaultFileStatus.INTEGRITY_FAILED, (read as VaultFileGuard.Read.Refused).status)
+        assertTrue(read.reason, read.reason.contains("v5"))
+        assertFalse("the superseded copy is deleted", storage.exists("flags"))
+        assertEquals(VaultFileStatus.INTEGRITY_FAILED, f.status(file()))
+        assertEquals("the floor is kept", 5, meta.versionFloor("default", "flags"))
     }
 
     @Test

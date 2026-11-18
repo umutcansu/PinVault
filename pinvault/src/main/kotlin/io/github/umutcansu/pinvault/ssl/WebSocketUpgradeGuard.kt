@@ -142,8 +142,10 @@ internal class HopWatchingCookieJar(internal val delegate: CookieJar) : CookieJa
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         CrossOriginRedirectGuard.onHop(url)
-        if (WebSocketUpgradeGuard.stopsHop(url)) return emptyList()
-        return delegate.loadForRequest(url)
+        val cookies = if (WebSocketUpgradeGuard.stopsHop(url)) emptyList() else delegate.loadForRequest(url)
+        // The only Cookie a hop to another origin may carry (see CrossOriginRedirectGuard).
+        CrossOriginRedirectGuard.onJarCookies(url, cookies)
+        return cookies
     }
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) = delegate.saveFromResponse(url, cookies)

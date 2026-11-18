@@ -314,9 +314,17 @@ final class VaultService: Sendable {
         guard case .unlocked(_, let version, let bytes) = result else { return result }
         // A server-sealed copy is verified only here, after the prompt: this
         // is where its version becomes one the device has seen with a valid
-        // signature (the fetch stored it unopened and raised nothing).
-        if sealedByServer != nil, storage is UserAuthVaultStorage, router.storedVerifier(file) != nil {
-            vaultGuard.verified(file, version: version)
+        // signature (the fetch stored it unopened and raised nothing). A copy
+        // below the floor as it stood before this unlock (an older copy put
+        // back on its own) is deleted, not handed out.
+        if sealedByServer != nil, storage is UserAuthVaultStorage, router.storedVerifier(file) != nil,
+           case .refused(_, let reason)? = vaultGuard.verifiedAtUnlock(file, storage, version: version) {
+            return .failed(key: key, reason: reason)
+        }
+        // The prompt may have gone ahead for a waiting copy while the stored one
+        // was past its offline lifetime: what opened must be within it.
+        if case .refused(let status, let reason)? = vaultGuard.staleAfterUnlock(file, storage) {
+            return status == .stale ? .stale(key: key) : .failed(key: key, reason: reason)
         }
         switch vaultGuard.check(file, storage, bytes, version: version, router.storedVerifier(file)) {
         case .content: return result

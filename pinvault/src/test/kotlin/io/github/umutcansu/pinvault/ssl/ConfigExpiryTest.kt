@@ -291,4 +291,34 @@ class ConfigExpiryTest {
         assertNull(provider.currentConfig)
         assertEquals(now - hour, store.getCurrentIssuedAt())
     }
+
+    // ── A huge grace saturates instead of wrapping ──────────────────────
+
+    @Test
+    fun `a grace of Long MAX_VALUE keeps an expired config usable instead of wrapping negative`() = runTest {
+        store.save(config(4, issuedAt = now - 30 * hour, expiresAt = now - 6 * hour))
+        coEvery { api.fetchConfig(any()) } throws java.io.IOException("offline")
+
+        assertEquals(InitResult.Ready(4), updater(graceMs = Long.MAX_VALUE).initializeAndUpdate())
+    }
+
+    @Test
+    fun `a grace of Long MAX_VALUE does not refuse the handshake check`() {
+        val manager = DynamicSSLManager()
+        manager.clock = { now }
+        manager.expiredConfigGraceMs = Long.MAX_VALUE
+        val expired = config(4, issuedAt = now - 30 * hour, expiresAt = now - 6 * hour)
+
+        assertSame(expired, manager.requireUsableConfig(expired, "api.test"))
+    }
+
+    @Test
+    fun `the expiry deadline saturates and is unchanged for sane values`() {
+        assertEquals(now + 6 * hour, ConfigExpiry.deadline(now, 6 * hour))
+        assertEquals(now, ConfigExpiry.deadline(now, 0L))
+        assertEquals(Long.MAX_VALUE, ConfigExpiry.deadline(now, Long.MAX_VALUE))
+        assertEquals(Long.MAX_VALUE, ConfigExpiry.deadline(Long.MAX_VALUE, 1L))
+        assertEquals(Long.MIN_VALUE, ConfigExpiry.deadline(-now, Long.MIN_VALUE))
+        assertEquals(now - 5, ConfigExpiry.deadline(now, -5L))
+    }
 }

@@ -285,7 +285,7 @@ final class ConfigApiClient: @unchecked Sendable {
             return false
         }
         let before = clientProvider.currentConfig
-        let wasExpired = before.map { $0.expiresAt > 0 && trustedClock.now() >= $0.expiresAt + sslManager.expiredConfigGraceMs } ?? false
+        let wasExpired = before.map { $0.expiresAt > 0 && trustedClock.now() >= ConfigExpiry.deadline($0.expiresAt, sslManager.expiredConfigGraceMs) } ?? false
         let result = await updateNow()
         listener(result)
         // An expired config refreshed in place (same pins, newer expiresAt) is

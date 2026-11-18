@@ -25,7 +25,9 @@ struct StoredVerifier: Sendable {
 ///    a verified signature is remembered apart from the copy, per Config API
 ///    and key, and nothing that deletes the copy (``forget(_:)``, a failed
 ///    check, `wipeWhenStale`, a wipe) lowers it: the router refuses an older
-///    version however the copy went away. Files of unsigned blocks have none.
+///    version however the copy went away, and a stored copy below it is not
+///    handed out when it is read (an older copy put back on its own with its
+///    own signature record). Files of unsigned blocks have none.
 ///
 /// A store that cannot be read right now is none of these: nothing is handed
 /// out and nothing is deleted.
@@ -83,6 +85,35 @@ final class VaultFileGuard: Sendable {
     func verified(_ file: VaultFileConfig, version: Int) {
         guard version > 0 else { return }
         quietly(file.key) { try meta.raiseVersionFloor(configApiId: file.configApiId, key: file.key, to: version) }
+    }
+
+    /// `unlockFile` opened a server-sealed copy and its signature passed: nil
+    /// when it may be handed out, and the floor rises to `version`. First,
+    /// though, the floor as it stood before this unlock: a copy below it is one
+    /// a newer verified version superseded, put back on its own (its envelope
+    /// still verifies — nothing in it names the floor). It is deleted the way
+    /// a failed check deletes, and the floor is kept.
+    func verifiedAtUnlock(_ file: VaultFileConfig, _ storage: any VaultStorageProvider, version: Int) -> Read? {
+        let floor: Int
+        do {
+            floor = try meta.versionFloor(configApiId: file.configApiId, key: file.key)
+        } catch {
+            return unavailable(file.key, error)
+        }
+        if let problem = Self.belowFloorProblem(version, floor) {
+            return remove(file, storage, .integrityFailed,
+                          "Vault file '\(file.key)' failed its check when unlocked: \(problem). The stored copy was deleted; fetch it again.")
+        }
+        verified(file, version: version)
+        return nil
+    }
+
+    /// Why a copy signed as `version` may not be handed out under `floor`, or
+    /// nil. A copy without a version (0: a backend that sends none) is not
+    /// judged, as at download.
+    private static func belowFloorProblem(_ version: Int, _ floor: Int) -> String? {
+        guard version > 0, version < floor else { return nil }
+        return "it is signed as v\(version), but this device has already verified v\(floor) of it (an older copy put back)"
     }
 
     /// The highest version of `file` this device accepted with a verified
@@ -176,6 +207,24 @@ final class VaultFileGuard: Sendable {
     func beforeUnlock(_ file: VaultFileConfig, _ storage: any VaultStorageProvider) -> Read? {
         do {
             guard try storage.exists(key: file.key), try isStale(file) else { return nil }
+            // A newer copy the server served within the lifetime is waiting to
+            // be opened: the prompt goes ahead for it. What the unlock hands
+            // out is checked again afterwards (``staleAfterUnlock``), so a
+            // waiting copy that fails its check does not let the old one out.
+            if try freshness(file, record: pendingRecord(file.key)) == .fresh { return nil }
+            return try stale(file, storage)
+        } catch {
+            return unavailable(file.key, error)
+        }
+    }
+
+    /// `unlockFile`, after a copy opened: nil when it may be handed out. A
+    /// waiting copy that passed its check is the stored copy by now, confirmed
+    /// as of the time the server served it; a copy still past its lifetime
+    /// here is the old one, opened because the waiting copy was missing or failed.
+    func staleAfterUnlock(_ file: VaultFileConfig, _ storage: any VaultStorageProvider) -> Read? {
+        do {
+            guard try isStale(file) else { return nil }
             return try stale(file, storage)
         } catch {
             return unavailable(file.key, error)
@@ -202,6 +251,15 @@ final class VaultFileGuard: Sendable {
         // header has its files signed and recorded as v0 while the store
         // counts them itself; only then may the two differ.)
         let signedVersion = signatures.version
+        // The floor lives in an entry of its own: an older copy put back with
+        // its own signature record (entries are bound to their names, not to
+        // each other) still verifies, but sits below it.
+        let floor: Int
+        do {
+            floor = try meta.versionFloor(configApiId: file.configApiId, key: file.key)
+        } catch {
+            return unavailable(file.key, error)
+        }
         let problem: String?
         if signedVersion > 0 && signedVersion != version {
             problem = "it is stored as v\(version) but was signed as v\(signedVersion)"
@@ -209,7 +267,7 @@ final class VaultFileGuard: Sendable {
             problem = "it carries no signature but a verifying key is configured"
         } else {
             do {
-                problem = try verifier.verify(bytes, signedVersion, signatures.entries)
+                problem = try verifier.verify(bytes, signedVersion, signatures.entries) ?? Self.belowFloorProblem(signedVersion, floor)
             } catch {
                 return unavailable(file.key, error)
             }
@@ -274,10 +332,10 @@ final class VaultFileGuard: Sendable {
     /// lifetime, or never confirmed. ``Freshness/unconfirmed`` is a confirmation
     /// time that lies ahead of the trusted clock: not handed out until the
     /// server confirms it again, but never deleted on that ground alone.
-    private func freshness(_ file: VaultFileConfig) throws -> Freshness {
+    private func freshness(_ file: VaultFileConfig, record: String? = nil) throws -> Freshness {
         let max = maxOfflineAgeMs(file)
         if max <= 0 { return .fresh }
-        let confirmedAt = try meta.confirmedAt(file.key)
+        let confirmedAt = try meta.confirmedAt(record ?? file.key)
         // Never on record: stored before a limit was set. Fail closed.
         if confirmedAt <= 0 { return .stale }
         let now = now(file.configApiId)

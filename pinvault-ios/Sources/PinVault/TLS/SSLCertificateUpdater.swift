@@ -143,7 +143,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
 
     /// True when `config` is past its `expiresAt` plus the grace. Configs without one never expire.
     private func isExpired(_ config: CertificateConfig) -> Bool {
-        config.expiresAt > 0 && (trustedClock?.now() ?? clock()) > config.expiresAt + expiredConfigGraceMs
+        config.expiresAt > 0 && (trustedClock?.now() ?? clock()) > ConfigExpiry.deadline(config.expiresAt, expiredConfigGraceMs)
     }
 
     private func expiredResult(_ config: CertificateConfig, _ cause: (any Error)?) -> InitResult {

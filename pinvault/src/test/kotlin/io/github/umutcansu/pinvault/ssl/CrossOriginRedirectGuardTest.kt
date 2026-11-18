@@ -162,6 +162,56 @@ class CrossOriginRedirectGuardTest {
     }
 
     @Test
+    fun `a Cookie written by an interceptor added after applyTo does not follow a cached redirect`() {
+        // Review 2026-11-17: Cookie is one of the headers OkHttp writes per
+        // hop, so a cross-origin hop of a pass that never reached its origin
+        // kept it — also when it was the app's, set by hand after applyTo.
+        val client = OkHttpClient.Builder()
+            .addInterceptor(CrossOriginRedirectGuard.applicationSide)
+            .addNetworkInterceptor(CrossOriginRedirectGuard)
+            .cookieJar(HopWatchingCookieJar(CookieJar.NO_COOKIES))
+            .cache(Cache(cacheDir, 1L shl 20))
+            .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("Cookie", "session=abc").build()) }
+            .build()
+        origin.enqueue(cachedRedirect())
+        other.enqueue(MockResponse().setBody("ok"))
+        other.enqueue(MockResponse().setBody("ok"))
+
+        client.newCall(Request.Builder().url(origin.url("/start")).build()).execute().close()
+        assertEquals("session=abc", origin.takeRequest(1, TimeUnit.SECONDS)!!.getHeader("Cookie"))
+        assertNull(other.takeRequest(1, TimeUnit.SECONDS)!!.getHeader("Cookie"))
+        client.newCall(Request.Builder().url(origin.url("/start")).build()).execute().close()
+
+        assertEquals("the redirect was answered from the cache", 1, origin.requestCount)
+        assertNull(other.takeRequest(1, TimeUnit.SECONDS)!!.getHeader("Cookie"))
+    }
+
+    @Test
+    fun `a cached redirect still takes the jar's own cookie for the new host`() {
+        val jar = object : CookieJar {
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {}
+            override fun loadForRequest(url: HttpUrl): List<Cookie> =
+                if (url.port == other.port) listOf(Cookie.Builder().name("theirs").value("1").domain(url.host).build()) else emptyList()
+        }
+        val client = OkHttpClient.Builder()
+            .addInterceptor(CrossOriginRedirectGuard.applicationSide)
+            .addNetworkInterceptor(CrossOriginRedirectGuard)
+            .cookieJar(HopWatchingCookieJar(jar))
+            .cache(Cache(cacheDir, 1L shl 20))
+            .build()
+        origin.enqueue(cachedRedirect())
+        other.enqueue(MockResponse().setBody("ok"))
+        other.enqueue(MockResponse().setBody("ok"))
+
+        client.newCall(Request.Builder().url(origin.url("/start")).build()).execute().close()
+        other.takeRequest(1, TimeUnit.SECONDS)
+        client.newCall(Request.Builder().url(origin.url("/start")).build()).execute().close()
+
+        assertEquals(1, origin.requestCount)
+        assertEquals("theirs=1", other.takeRequest(1, TimeUnit.SECONDS)!!.getHeader("Cookie"))
+    }
+
+    @Test
     fun `a header whose value changed between two attempts of a call is dropped too`() {
         // A session header refreshed after a 401, by an interceptor of the
         // app: the redirect that follows carries the NEW value, which is not

@@ -270,7 +270,7 @@ internal class ConfigApiClient(
         clientProvider.recoveryUpdater = suspend {
             val before = clientProvider.currentConfig
             val wasExpired = before != null && before.expiresAt > 0L &&
-                trustedClock.now() >= before.expiresAt + expiredConfigGraceMs
+                trustedClock.now() >= io.github.umutcansu.pinvault.ssl.ConfigExpiry.deadline(before.expiresAt, expiredConfigGraceMs)
             val result = updateNow()
             recoveryListener(result)
             // An expired config refreshed in place (same pins, newer expiresAt)

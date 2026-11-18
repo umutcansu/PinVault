@@ -1,6 +1,7 @@
 package io.github.umutcansu.pinvault.ssl
 
 import okhttp3.Call
+import okhttp3.Cookie
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
@@ -54,6 +55,13 @@ import java.util.WeakHashMap
  * the headers of interceptors added after `applyTo` were never seen. Nothing
  * says then which headers are the app's, so only [NEUTRAL] headers and the
  * ones OkHttp's own layers write per hop ([PER_HOP]) are kept.
+ *
+ * `Cookie` among those only as the jar wrote it (review 2026-11-17): an
+ * interceptor added after `applyTo` that sets `Cookie` by hand looks like
+ * the jar's own header on a cached redirect. Where [HopWatchingCookieJar]
+ * is in place it reports what the jar gave for each hop's URL in this pass
+ * ([onJarCookies]); a `Cookie` on a hop to another origin is kept only when
+ * it is exactly that, and dropped otherwise (also when the jar gave none).
  *
  * Same-origin redirects are untouched. `PinVault-Token` / `-Proof` are
  * dropped by their own interceptor already. WebSocket upgrades never pass a
@@ -136,6 +144,9 @@ internal object CrossOriginRedirectGuard : Interceptor {
     /** The pass the current thread is carrying down the chain; see [applicationSide]. */
     private class Pass(val trail: Trail) {
         var firstHopSeen = false
+
+        /** Hop URL → the `Cookie` header the jar's cookies make for it in this pass ("" = none). */
+        val jarCookies = HashMap<HttpUrl, String>()
     }
 
     private val passes = ThreadLocal<Pass?>()
@@ -179,6 +190,16 @@ internal object CrossOriginRedirectGuard : Interceptor {
         pass.trail.headFor(url)
     }
 
+    /**
+     * Called by [HopWatchingCookieJar] with what it hands OkHttp's bridge
+     * for [url]: the only `Cookie` a hop to another origin may carry.
+     */
+    fun onJarCookies(url: HttpUrl, cookies: List<Cookie>) {
+        val pass = passes.get() ?: return
+        // As OkHttp's BridgeInterceptor writes the header.
+        pass.jarCookies[url] = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+    }
+
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val call = chain.call()
@@ -204,9 +225,16 @@ internal object CrossOriginRedirectGuard : Interceptor {
             )
         }
         val reachedOrigin = trail.reachedOrigin
+        // What the jar wrote for this hop, when the wrapper watches this call's
+        // pass; null without it (a client with this interceptor alone).
+        val pass = passes.get()?.takeIf { it.trail === trail && it.firstHopSeen }
         val dropped = request.headers.names().filter { name ->
             val key = name.lowercase()
-            key !in NEUTRAL && (trail.carried(name, request.headers.values(name)) || (!reachedOrigin && key !in PER_HOP))
+            key !in NEUTRAL && (
+                trail.carried(name, request.headers.values(name)) ||
+                    (!reachedOrigin && key !in PER_HOP) ||
+                    (key == "cookie" && pass != null && !isJarsCookie(request.headers.values(name), pass.jarCookies[request.url]))
+                )
         }
         if (dropped.isEmpty()) return chain.proceed(request)
         if (reachedOrigin) {
@@ -226,6 +254,10 @@ internal object CrossOriginRedirectGuard : Interceptor {
         val stripped = request.newBuilder().apply { dropped.forEach { removeHeader(it) } }.build()
         return chain.proceed(stripped)
     }
+
+    /** True when [values] is exactly the header the jar wrote for the hop ([jar]; "" or null = none). */
+    private fun isJarsCookie(values: List<String>, jar: String?): Boolean =
+        !jar.isNullOrEmpty() && values == listOf(jar)
 
     internal fun sameOrigin(a: HttpUrl, b: HttpUrl): Boolean =
         a.scheme == b.scheme && a.host.equals(b.host, ignoreCase = true) && a.port == b.port

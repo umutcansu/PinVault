@@ -458,13 +458,14 @@ final class VaultFileRouterUserAuthTests: XCTestCase {
         XCTAssertTrue(try storage.exists(key: "st"), "the verified copy is untouched")
         XCTAssertEqual(try storage.getVersion(key: "st"), 3)
 
-        // Meanwhile the server is asked with the pending version; its 304 keeps the verified copy confirmed.
+        // Meanwhile the server is asked with the pending version. Its 304 answers that version, which
+        // nobody verified yet: it does not confirm the verified copy (review 2026-11-17).
         clock.withLock { $0 += 1_000 }
         api.answer(VaultFetchResponse(content: Data(), version: 4, encryption: "user_auth", notModified: true))
         let third = await router.fetchFile(file())
         XCTAssertEqual(third, .alreadyCurrent(key: "st", version: 4))
         XCTAssertEqual(api.askedVersions, [0, 3, 4])
-        XCTAssertEqual(meta.confirmedAt("st"), clock.get())
+        XCTAssertEqual(meta.confirmedAt("st"), confirmedV3)
 
         let result = await storage.unlock("st", authenticate: passes, onPromoted: { _ in XCTFail("a copy that fails its check is never promoted") },
                                           verify: router.unlockVerifier(file()))
@@ -476,6 +477,58 @@ final class VaultFileRouterUserAuthTests: XCTestCase {
         // Without a pending copy the server is asked with the verified version again.
         _ = await router.fetchFile(file())
         XCTAssertEqual(api.askedVersions, [0, 3, 4, 3])
+    }
+
+    func testANewerCopyServedWithinTheLifetimeStillOpensAfterTheStoredOneWentStale() async throws {
+        let day: Int64 = 86_400_000
+        let storage = strictStorage()
+        let clock = self.clock
+        let vaultGuard = VaultFileGuard(meta: meta, now: { _ in clock.get() }, defaultMaxOfflineAgeMs: day)
+        let router = router(storage, guard: vaultGuard)
+        serverSeals(version: 3)
+        _ = await router.fetchFile(file())
+        serverSeals(version: 4)
+        _ = await router.fetchFile(file())
+
+        // The user does not open the file for two days; the server keeps answering 304 to v4.
+        clock.withLock { $0 += 2 * day }
+        api.answer(VaultFetchResponse(content: Data(), version: 4, encryption: "user_auth", notModified: true))
+        _ = await router.fetchFile(file())
+
+        XCTAssertTrue(try vaultGuard.isStale(file()), "the stored copy is past its lifetime")
+        XCTAssertNil(vaultGuard.beforeUnlock(file(), storage), "the prompt goes ahead for the waiting copy")
+        let st = file()
+        let result = await storage.unlock("st", authenticate: passes, onPromoted: { vaultGuard.promoted(st, version: $0) },
+                                          verify: router.unlockVerifier(file()))
+        XCTAssertEqual(result, .unlocked(key: "st", version: 4, bytes: content))
+        XCTAssertNil(vaultGuard.staleAfterUnlock(file(), storage), "confirmed as of the last 304 for it")
+    }
+
+    func testAWaitingCopyThatFailsItsCheckDoesNotLetAStaleStoredCopyOut() async throws {
+        let day: Int64 = 86_400_000
+        let storage = strictStorage()
+        let clock = self.clock
+        let vaultGuard = VaultFileGuard(meta: meta, now: { _ in clock.get() }, defaultMaxOfflineAgeMs: day)
+        let router = router(storage, guard: vaultGuard)
+        serverSeals(version: 3)
+        _ = await router.fetchFile(file())
+        let keys = self.keys
+        api.onDownload { _ in
+            VaultFetchResponse(content: try SoftwareUserAuthKeys.serverEnvelope(Data(utf8: "planted"), keys.publicKey()), version: 3 + 999_999,
+                               encryption: "user_auth", signature: "bm90LWEtc2lnbmF0dXJl")
+        }
+        _ = await router.fetchFile(file())
+        clock.withLock { $0 += 2 * day }
+        api.answer(VaultFetchResponse(content: Data(), version: 0, encryption: "user_auth", notModified: true))
+        _ = await router.fetchFile(file())
+
+        XCTAssertNil(vaultGuard.beforeUnlock(file(), storage), "the prompt goes ahead: a copy is waiting")
+        let st = file()
+        let result = await storage.unlock("st", authenticate: passes, onPromoted: { vaultGuard.promoted(st, version: $0) },
+                                          verify: router.unlockVerifier(file()))
+        XCTAssertEqual(result, .unlocked(key: "st", version: 3, bytes: content), "the planted copy is gone and the old one opened")
+        guard case .refused(let status, _)? = vaultGuard.staleAfterUnlock(file(), storage) else { return XCTFail("but it is not handed out") }
+        XCTAssertEqual(status, .stale)
     }
 
     func testAReplacedKeyGivesUpTheStoredCopyWithItsPendingOneAndTheNewDownloadIsTheStoredCopy() async throws {

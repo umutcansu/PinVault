@@ -2090,7 +2090,16 @@ object PinVault {
             // A server-sealed copy was opened and its signature checked just
             // now (a signing block: there is a verifier): its version is one
             // the device has verified, and no older one is taken from here on.
-            if (sealedByServer != null && storedVerifier != null) guard.verifiedAtUnlock(file, result.version)
+            // A copy below the floor as it stood before this unlock (an older
+            // copy put back on its own) is deleted, not handed out.
+            if (sealedByServer != null && storedVerifier != null) {
+                guard.verifiedAtUnlock(file, storage, result.version)?.let { refused ->
+                    return@withContext VaultFileUnlockResult.Failed(key, refused.reason)
+                }
+            }
+            // The prompt may have gone ahead for a waiting copy while the stored
+            // one was past its offline lifetime: what opened must be within it.
+            guard.staleAfterUnlock(file, storage)?.let { return@withContext VaultFileUnlockResult.Stale(key) }
             when (val read = guard.check(file, storage, result.bytes, result.version, storedVerifier)) {
                 is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Content -> result
                 is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Refused -> VaultFileUnlockResult.Failed(key, read.reason)

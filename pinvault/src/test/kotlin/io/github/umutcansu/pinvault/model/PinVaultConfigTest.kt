@@ -249,6 +249,15 @@ class PinVaultConfigTest {
         assertEquals(6 * 3_600_000L, config.expiredConfigGraceMs)
     }
 
+    @Test
+    fun `a huge expiredConfigGrace is kept and its deadline saturates`() {
+        val config = api("https://api.example.com")
+            .expiredConfigGrace(Long.MAX_VALUE, java.util.concurrent.TimeUnit.DAYS)
+            .build()
+        assertEquals(Long.MAX_VALUE, config.expiredConfigGraceMs)
+        assertEquals(Long.MAX_VALUE, io.github.umutcansu.pinvault.ssl.ConfigExpiry.deadline(1_800_000_000_000L, config.expiredConfigGraceMs))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `negative grace is refused`() {
         api("https://api.example.com").expiredConfigGrace(-1, java.util.concurrent.TimeUnit.SECONDS)

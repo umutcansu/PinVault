@@ -825,7 +825,7 @@ final class DynamicSSLManager: @unchecked Sendable {
         // so recovery should try. Bootstrap and static configs carry no
         // expiresAt (0) and are never refused here.
         let (grace, clock) = state.withLock { ($0.expiredConfigGraceMs, $0.clock) }
-        if config.expiresAt > 0, clock() > config.expiresAt + grace {
+        if config.expiresAt > 0, clock() > ConfigExpiry.deadline(config.expiresAt, grace) {
             throw PinVaultError.certificate(
                 message: "Pin config expired at \(config.expiresAt) (Unix ms) — refusing connection to '\(hostname)' " +
                     "until a fresh config is fetched",

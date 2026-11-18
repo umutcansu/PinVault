@@ -264,6 +264,55 @@ final class VaultFileVersionFloorTests: XCTestCase {
         XCTAssertEqual(floor("st"), 0)
     }
 
+    // MARK: A superseded copy put back on its own (review 2026-11-17)
+
+    func testAnOlderSignedCopyPutBackOnItsOwnIsRefusedBelowTheFloorWhenLoaded() async throws {
+        let vault = service()
+        serve("flags", "v3", version: 3)
+        _ = await vault.fetchFile("flags")
+        let oldBlob = store.blobs["flags"]!
+        let oldSignatures = meta.signatures("flags")
+        serve("flags", "v5", version: 5)
+        guard case .updated = await vault.fetchFile("flags") else { return XCTFail() }
+        XCTAssertEqual(floor("flags"), 5)
+
+        // The entries are bound to their names only: the v3 copy and its own
+        // signature record come back, the floor does not.
+        store.setBlob("flags", oldBlob)
+        store.setVersion("flags", 3)
+        meta.saveSignatures("flags", oldSignatures)
+
+        XCTAssertNil(vault.loadFile("flags"))
+        XCTAssertEqual(vault.fileStatus("flags"), .integrityFailed)
+        XCTAssertFalse(vault.hasFile("flags"), "the superseded copy is deleted")
+        XCTAssertEqual(floor("flags"), 5, "the floor is kept")
+    }
+
+    func testASupersededServerSealedCopyPutBackOnItsOwnIsRefusedAtUnlock() async throws {
+        let vault = service()
+        serveSealed(version: 3)
+        guard case .updated = await vault.fetchFile("st") else { return XCTFail() }
+        // A v5 was opened and verified since (floor 5); then the v3 copy came
+        // back alone. Its own envelope and signature still verify.
+        meta.raiseVersionFloor(configApiId: "default", key: "st", to: 5)
+
+        let opened = await vault.unlockFile(key: "st", prompt: VaultFileUnlockPrompt(title: "Open"))
+        guard case .failed(_, let reason, _) = opened else { return XCTFail("\(opened)") }
+        XCTAssertTrue(reason.contains("v5"), reason)
+        XCTAssertFalse(vault.hasFile("st"), "the superseded copy is deleted")
+        XCTAssertEqual(vault.fileStatus("st"), .integrityFailed)
+        XCTAssertEqual(floor("st"), 5, "the floor is kept")
+    }
+
+    func testTheServerSealedCopyThatSetTheFloorStillOpens() async throws {
+        let vault = service()
+        serveSealed(version: 5)
+        _ = await vault.fetchFile("st")
+        meta.raiseVersionFloor(configApiId: "default", key: "st", to: 5)
+        let opened = await vault.unlockFile(key: "st", prompt: VaultFileUnlockPrompt(title: "Open"))
+        XCTAssertEqual(opened, .unlocked(key: "st", version: 5, bytes: sealedContent))
+    }
+
     // MARK: The record itself
 
     func testTheFloorBelongsToOneFileOfOneConfigApiAndOnlyRises() throws {

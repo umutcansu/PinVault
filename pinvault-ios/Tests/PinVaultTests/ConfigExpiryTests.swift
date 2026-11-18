@@ -246,4 +246,31 @@ final class ConfigExpiryTests: XCTestCase {
         XCTAssertNil(provider.currentConfig)
         XCTAssertEqual(try store.getCurrentIssuedAt(), now - hour)
     }
+
+    // MARK: A huge grace saturates instead of trapping
+
+    func testAGraceOfInt64MaxKeepsAnExpiredConfigUsableInsteadOfTrapping() async throws {
+        try store.save(config(4, issuedAt: now - 30 * hour, expiresAt: now - 6 * hour))
+        api.fails()
+        let result = try await updater(graceMs: .max).initializeAndUpdate()
+        XCTAssertEqual(result, .ready(version: 4))
+    }
+
+    func testAGraceOfInt64MaxDoesNotRefuseTheHandshakeCheck() throws {
+        let manager = DynamicSSLManager()
+        let now = self.now
+        manager.clock = { now }
+        manager.expiredConfigGraceMs = .max
+        let expired = config(4, issuedAt: now - 30 * hour, expiresAt: now - 6 * hour)
+        XCTAssertEqual(try manager.requireUsableConfig(expired, hostname: "api.test"), expired)
+    }
+
+    func testTheExpiryDeadlineSaturatesAndIsUnchangedForSaneValues() {
+        XCTAssertEqual(ConfigExpiry.deadline(now, 6 * hour), now + 6 * hour)
+        XCTAssertEqual(ConfigExpiry.deadline(now, 0), now)
+        XCTAssertEqual(ConfigExpiry.deadline(now, .max), .max)
+        XCTAssertEqual(ConfigExpiry.deadline(.max, 1), .max)
+        XCTAssertEqual(ConfigExpiry.deadline(-now, .min), .min)
+        XCTAssertEqual(ConfigExpiry.deadline(now, -5), now - 5)
+    }
 }

@@ -856,7 +856,7 @@ internal class DynamicSSLManager(
         // config is exactly what repairs this, so the recovery
         // interceptor should try. Bootstrap and static configs carry
         // no expiresAt (0) and are never refused here.
-        if (config.expiresAt > 0L && clock() > config.expiresAt + expiredConfigGraceMs) {
+        if (config.expiresAt > 0L && clock() > ConfigExpiry.deadline(config.expiresAt, expiredConfigGraceMs)) {
             throw CertificateException(
                 "Pin config expired at ${config.expiresAt} (Unix ms) — refusing connection to '$hostname' " +
                     "until a fresh config is fetched",

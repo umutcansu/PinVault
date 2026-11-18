@@ -51,8 +51,10 @@ internal class StoredVerifier(
  *  - **Version floor.** The highest version of a file that ever passed its
  *    signature check is kept apart from the copy and outlives it: after
  *    `clearFile`, a deletion here, a revocation wipe or `unenroll`, the next
- *    download must be that version or a newer one ([versionFloor]). Files of
- *    unsigned blocks have no floor — nothing vouches for their version.
+ *    download must be that version or a newer one ([versionFloor]), and a
+ *    stored copy below it is not handed out when it is read (an older copy
+ *    put back on its own with its own signature record). Files of unsigned
+ *    blocks have no floor — nothing vouches for their version.
  *
  * A Keystore that cannot be read right now is none of these: nothing is
  * handed out and nothing is deleted. The same goes while the block's
@@ -109,10 +111,36 @@ internal class VaultFileGuard(
     /**
      * `unlockFile` opened a server-sealed (`user_auth`) copy and its
      * signature passed: only now is its version one a signature vouches for.
+     * Null when it may be handed out; the floor is then raised to [version].
+     *
+     * First, though, the floor as it stood before this unlock: a copy below
+     * it is one a newer verified version superseded, put back on its own
+     * (its envelope still verifies — nothing in it names the floor). It is
+     * deleted the way a failed check deletes, and the floor is kept.
      */
-    fun verifiedAtUnlock(file: VaultFileConfig, version: Int) = quietly(file.key) {
-        meta.raiseVersionFloor(file.configApiId, file.key, version)
+    fun verifiedAtUnlock(file: VaultFileConfig, storage: VaultStorageProvider, version: Int): Read.Refused? {
+        val floor = try {
+            meta.versionFloor(file.configApiId, file.key)
+        } catch (e: StoreUnreadableException) {
+            return unavailable(file.key, e)
+        }
+        belowFloorProblem(version, floor)?.let { problem ->
+            return remove(file, storage, VaultFileStatus.INTEGRITY_FAILED,
+                "Vault file '${file.key}' failed its check when unlocked: $problem. The stored copy was deleted; fetch it again.")
+        }
+        quietly(file.key) { meta.raiseVersionFloor(file.configApiId, file.key, version) }
+        return null
     }
+
+    /**
+     * Why a copy signed as [version] may not be handed out under [floor], or
+     * null. A copy without a version (0: a backend that sends none) is not
+     * judged, as at download.
+     */
+    private fun belowFloorProblem(version: Int, floor: Int): String? =
+        if (version in 1 until floor) {
+            "it is signed as v$version, but this device has already verified v$floor of it (an older copy put back)"
+        } else null
 
     /** Forgets every version floor (`PinVault.resetAndWipeStoredState`, tests only). */
     fun wipeVersionFloors() = quietly("*") { meta.wipeVersionFloors() }
@@ -221,9 +249,26 @@ internal class VaultFileGuard(
     fun beforeUnlock(file: VaultFileConfig, storage: VaultStorageProvider, verifier: StoredVerifier? = null): Read.Refused? = try {
         when {
             !storage.exists(file.key) -> null
-            isStale(file) -> stale(file, storage)
+            // A newer copy the server served within the lifetime is waiting to
+            // be opened: the prompt goes ahead for it. What the unlock hands
+            // out is checked again afterwards ([staleAfterUnlock]), so a
+            // waiting copy that fails its check does not let the old one out.
+            isStale(file) && freshness(file, pendingRecord(file.key)) != Freshness.FRESH -> stale(file, storage)
             else -> verifier?.unavailable?.invoke()?.let { uncheckable(file.key, it) }
         }
+    } catch (e: StoreUnreadableException) {
+        unavailable(file.key, e)
+    }
+
+    /**
+     * `unlockFile`, after a copy opened: null when it may be handed out. A
+     * waiting copy that passed its check is the stored copy by now, confirmed
+     * as of the time the server served it ([promoted]); a copy that is still
+     * past its lifetime here is the old one, opened because the waiting copy
+     * was missing or failed.
+     */
+    fun staleAfterUnlock(file: VaultFileConfig, storage: VaultStorageProvider): Read.Refused? = try {
+        if (isStale(file)) stale(file, storage) else null
     } catch (e: StoreUnreadableException) {
         unavailable(file.key, e)
     }
@@ -252,10 +297,18 @@ internal class VaultFileGuard(
         // header has its files signed and recorded as v0 while the store
         // counts them itself; only then may the two differ.)
         val signedVersion = signatures.version
+        // The floor lives in an entry of its own: an older copy put back with
+        // its own signature record (entries are bound to their names, not to
+        // each other) still verifies, but sits below it.
+        val floor = try {
+            meta.versionFloor(file.configApiId, file.key)
+        } catch (e: StoreUnreadableException) {
+            return unavailable(file.key, e)
+        }
         val problem = when {
             signedVersion > 0 && signedVersion != version -> "it is stored as v$version but was signed as v$signedVersion"
             signatures.entries.isEmpty() -> "it carries no signature but a verifying key is configured"
-            else -> verifier.verify(bytes, signedVersion, signatures.entries)
+            else -> verifier.verify(bytes, signedVersion, signatures.entries) ?: belowFloorProblem(signedVersion, floor)
         } ?: return Read.Content(bytes)
 
         return remove(file, storage, VaultFileStatus.INTEGRITY_FAILED,
@@ -323,10 +376,10 @@ internal class VaultFileGuard(
      *
      * @throws StoreUnreadableException when the confirmation time cannot be read right now
      */
-    private fun freshness(file: VaultFileConfig): Freshness {
+    private fun freshness(file: VaultFileConfig, record: String = file.key): Freshness {
         val max = maxOfflineAgeMs(file)
         if (max <= 0L) return Freshness.FRESH
-        val confirmedAt = meta.confirmedAt(file.key)
+        val confirmedAt = meta.confirmedAt(record)
         // Never on record: stored before a limit was set. Fail closed — and an
         // entry removed from storage must not read as "confirmed just now".
         if (confirmedAt <= 0L) return Freshness.STALE

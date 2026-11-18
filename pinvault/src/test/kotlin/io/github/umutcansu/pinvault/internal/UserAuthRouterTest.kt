@@ -537,6 +537,85 @@ class UserAuthRouterTest {
     }
 
     @Test
+    fun `not modified for an unverified pending version does not keep the verified copy fresh`() = runTest {
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now })
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 3)
+        router.fetchFile(file())
+        val confirmedV3 = meta.confirmedAt("st")
+
+        // One answer from whoever holds the TLS key: an envelope nobody signed, far ahead.
+        now += 60_000
+        val planted = 3 + 999_999
+        coEvery { api.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns VaultFetchResponse(
+            content = SoftwareUserAuthKeys.serverEnvelope("planted".toByteArray(), keys.publicKey()),
+            version = planted, encryption = "user_auth", signature = "bm90LWEtc2lnbmF0dXJl"
+        )
+        router.fetchFile(file())
+        assertEquals(planted, storage.pendingVersion("st"))
+
+        // From then on the genuine server, asked with that version, has nothing newer.
+        val asked = slot<Int>()
+        coEvery { api.downloadVaultFileWithMeta(any(), capture(asked), any(), any()) } returns
+            VaultFetchResponse(content = ByteArray(0), version = 0, notModified = true)
+        now += 60_000
+        router.fetchFile(file())
+
+        assertEquals(planted, asked.captured)
+        assertEquals("a 304 for a version nobody verified says nothing about the copy on record", confirmedV3, meta.confirmedAt("st"))
+    }
+
+    @Test
+    fun `a newer copy served within the lifetime still opens after the stored one went stale`() = runTest {
+        val day = 86_400_000L
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now }, defaultMaxOfflineAgeMs = day)
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 3)
+        router.fetchFile(file())
+        serverSealsForRegisteredKey(version = 4)
+        router.fetchFile(file())
+
+        // The user does not open the file for two days; the server keeps answering 304 to v4.
+        coEvery { api.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns
+            VaultFetchResponse(content = ByteArray(0), version = 4, encryption = "user_auth", notModified = true)
+        now += 2 * day
+        router.fetchFile(file())
+
+        assertTrue("the stored copy is past its lifetime", guard.isStale(file()))
+        assertNull("the prompt goes ahead for the waiting copy", guard.beforeUnlock(file(), storage))
+        val unlocked = storage.unlock("st", passes, verify = router.unlockVerifier(file()), onPromoted = { guard.promoted(file(), it) })
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 4, content), unlocked)
+        assertNull("confirmed as of the last 304 for it", guard.staleAfterUnlock(file(), storage))
+    }
+
+    @Test
+    fun `a waiting copy that fails its check does not let a stale stored copy out`() = runTest {
+        val day = 86_400_000L
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now }, defaultMaxOfflineAgeMs = day)
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 3)
+        router.fetchFile(file())
+        coEvery { api.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns VaultFetchResponse(
+            content = SoftwareUserAuthKeys.serverEnvelope("planted".toByteArray(), keys.publicKey()),
+            version = 3 + 999_999, encryption = "user_auth", signature = "bm90LWEtc2lnbmF0dXJl"
+        )
+        router.fetchFile(file())
+        coEvery { api.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns
+            VaultFetchResponse(content = ByteArray(0), version = 0, notModified = true)
+        now += 2 * day
+        router.fetchFile(file())
+
+        assertNull("the prompt goes ahead: a copy is waiting", guard.beforeUnlock(file(), storage))
+        val unlocked = storage.unlock("st", passes, verify = router.unlockVerifier(file()), onPromoted = { guard.promoted(file(), it) })
+        assertEquals("the planted copy is gone and the old one opened", VaultFileUnlockResult.Unlocked("st", 3, content), unlocked)
+        val refused = guard.staleAfterUnlock(file(), storage)
+        assertEquals("but it is not handed out", io.github.umutcansu.pinvault.model.VaultFileStatus.STALE, refused?.status)
+    }
+
+    @Test
     fun `a user_auth file's floor rises when its signature passes at unlock, and outlives the copy`() = runTest {
         val storage = strictStorage()
         val guard = VaultFileGuard(meta, { now })
@@ -548,7 +627,7 @@ class UserAuthRouterTest {
         // What PinVault.unlockFile does once the copy opened and its signature passed.
         val unlocked = storage.unlock("st", passes, verify = router.unlockVerifier(file()))
         assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), unlocked)
-        guard.verifiedAtUnlock(file(), 5)
+        assertNull(guard.verifiedAtUnlock(file(), storage, 5))
         assertEquals(5, meta.versionFloor("default", "st"))
 
         // clearFile: the copy goes, the floor stays.
@@ -562,6 +641,43 @@ class UserAuthRouterTest {
 
         serverSealsForRegisteredKey(version = 5)
         assertEquals(VaultFileResult.Updated("st", 5, ByteArray(0)), router.fetchFile(file()))
+    }
+
+    @Test
+    fun `a superseded user_auth copy put back on its own is refused at unlock, below the floor it had before`() = runTest {
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now })
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 3)
+        router.fetchFile(file())
+        // A v5 was opened and verified since (floor 5); then the v3 copy came
+        // back alone (partial restore of the app's storage): its own envelope
+        // and signature still verify.
+        meta.raiseVersionFloor("default", "st", 5)
+
+        val unlocked = storage.unlock("st", passes, verify = router.unlockVerifier(file()))
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 3, content), unlocked)
+        // What PinVault.unlockFile does next: the floor as it stood before this unlock decides.
+        val refused = guard.verifiedAtUnlock(file(), storage, 3)
+
+        assertEquals(io.github.umutcansu.pinvault.model.VaultFileStatus.INTEGRITY_FAILED, refused?.status)
+        assertFalse("the superseded copy is deleted", storage.exists("st"))
+        assertEquals(io.github.umutcansu.pinvault.model.VaultFileStatus.INTEGRITY_FAILED, meta.problem("st"))
+        assertEquals("the floor is kept", 5, meta.versionFloor("default", "st"))
+    }
+
+    @Test
+    fun `the copy that set the floor still opens at unlock`() = runTest {
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now })
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 5)
+        router.fetchFile(file())
+        meta.raiseVersionFloor("default", "st", 5)
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), storage.unlock("st", passes, verify = router.unlockVerifier(file())))
+        assertNull(guard.verifiedAtUnlock(file(), storage, 5))
+        assertTrue(storage.exists("st"))
     }
 
     @Test
@@ -588,14 +704,15 @@ class UserAuthRouterTest {
         assertEquals(3, storage.getVersion("st"))
 
         // Meanwhile the server is asked with the pending version, so it does
-        // not serve the file again on every sync; its 304 keeps the verified copy confirmed.
+        // not serve the file again on every sync. Its 304 answers that version, which
+        // nobody verified yet: it does not confirm the verified copy (review 2026-11-17).
         now += 1_000
         coEvery { api.downloadVaultFileWithMeta(any(), capture(asked), any(), any()) } answers {
             VaultFetchResponse(content = ByteArray(0), version = 4, encryption = "user_auth", notModified = true)
         }
         assertEquals(VaultFileResult.AlreadyCurrent("st", 4), router.fetchFile(file()))
         assertEquals(listOf(3, 4), asked)
-        assertEquals(now, meta.confirmedAt("st"))
+        assertEquals(confirmedV3, meta.confirmedAt("st"))
 
         val result = storage.unlock(
             "st", passes, verify = router.unlockVerifier(file()),
