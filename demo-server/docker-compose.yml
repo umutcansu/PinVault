@@ -32,6 +32,13 @@ services:
       - RECOVERY_PORT=8083
       - CLIENT_CERT_TTL_DAYS=${CLIENT_CERT_TTL_DAYS:-}
       - DB_PATH=/data/db/pinvault.db
+      # SQLite: journal mode (wal | delete) and how hard a commit waits for the
+      # disk (normal | full; unset = normal under wal). With normal a power loss
+      # or OS crash can undo the last commits (a revocation, a spent enrollment
+      # token, audit rows): check the latest changes in the panel after one.
+      # See demo-server/README.md before choosing full (measure it on your disk).
+      - DB_JOURNAL_MODE=${DB_JOURNAL_MODE:-}
+      - DB_SYNCHRONOUS=${DB_SYNCHRONOUS:-}
       - CERTS_DIR=/data/certs
       - SIGNING_KEY_PATH=/data/keys/signing-key.pem
       - ENROLLMENT_MODE=${ENROLLMENT_MODE:-token}

@@ -359,8 +359,16 @@ fun Route.hostRoutes(
             post("start-mock") {
                 val hostname = call.pathParameters["hostname"] ?: ""
                 val body = call.receive<kotlinx.serialization.json.JsonObject>()
-                val port = body["port"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Int>(), it) } ?: 8443
-                val mtls = body["mtls"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Boolean>(), it) } ?: false
+                // A port that is not a whole number 1..65535 or an mtls that is not a
+                // boolean is the caller's mistake: 400, not a decoding error's 500 (ZAP 2026-11-18).
+                val portField = body["port"]
+                val port = if (portField == null) 8443 else
+                    (portField as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { !it.isString }?.content?.toIntOrNull()?.takeIf { it in 1..65535 }
+                        ?: return@post call.respondText("""{"error":"port must be a whole number from 1 to 65535"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                val mtlsField = body["mtls"]
+                val mtls = if (mtlsField == null) false else
+                    (mtlsField as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { !it.isString }?.content?.toBooleanStrictOrNull()
+                        ?: return@post call.respondText("""{"error":"mtls must be true or false"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
 
                 val hostRecord = hostStore.get(hostname, call.scopedApiId())
                     ?: return@post call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)

@@ -203,7 +203,9 @@ class CertificateService(
         val subject = X500Name("CN=$hostname, O=PinVault Demo, C=TR")
         val notBefore = Date()
         val notAfter = Date(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
-        val serial = BigInteger.valueOf(System.currentTimeMillis())
+        // Random, like every other certificate this server makes (testssl 2026-11-18: a
+        // millisecond clock is six guessable bytes).
+        val serial = randomSerial()
 
         val certBuilder = JcaX509v3CertificateBuilder(
             subject, serial, notBefore, notAfter, subject, keyPair.public
@@ -813,6 +815,31 @@ class CertificateService(
     ) {
         /** The request's DER, as signed (a renewal remembers its hash to refuse a replay). */
         val der: ByteArray get() = request.encoded
+
+        /**
+         * What a renewal remembers of this request to refuse a copy of it: the
+         * SHA-256 (Base64) of the signed part and the signature in ONE form.
+         * Not of the whole DER: an ECDSA signature (r, s) verifies as (r, n - s)
+         * too, and the same request re-encoded is the same request.
+         */
+        val replayKey: String get() {
+            val signed = request.toASN1Structure().certificationRequestInfo.getEncoded("DER")
+            val raw = request.signature
+            val signature: ByteArray = (publicKey as? java.security.interfaces.ECPublicKey)?.let { ec ->
+                runCatching {
+                    val seq = org.bouncycastle.asn1.ASN1Sequence.getInstance(raw)
+                    require(seq.size() == 2)
+                    val r = org.bouncycastle.asn1.ASN1Integer.getInstance(seq.getObjectAt(0)).value
+                    val s = org.bouncycastle.asn1.ASN1Integer.getInstance(seq.getObjectAt(1)).value
+                    "${r.toString(16)}:${s.min(ec.params.order.subtract(s)).toString(16)}".toByteArray(Charsets.US_ASCII)
+                }.getOrNull()
+            } ?: raw
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            digest.update(signed)
+            digest.update(0)
+            digest.update(signature)
+            return Base64.getEncoder().encodeToString(digest.digest())
+        }
     }
 
     private val csrSignatureCounter = java.util.concurrent.atomic.AtomicLong()

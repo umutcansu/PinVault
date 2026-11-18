@@ -70,6 +70,8 @@ class RecoveryListener(
             installRequestLog("recovery :$port")
             // Everything here is open to anyone; a renewal body is a CSR of a few hundred bytes.
             install(com.example.pinvault.server.plugin.ClientBodyLimit) { appliesTo = { _, _ -> true } }
+            // The same response headers as every device-facing listener (testssl 2026-11-18: none here).
+            install(com.example.pinvault.server.plugin.ApiSecurityHeaders)
             routing {
                 get("/health") { call.respondText("""{"status":"ok"}""", io.ktor.http.ContentType.Application.Json) }
                 routes()

@@ -129,6 +129,23 @@ class VaultFileTokenStore(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * Revokes every token of a file: called when the file is deleted, so a
+     * token issued for it does not open whatever is uploaded under the same
+     * name later. Returns how many were still active.
+     */
+    fun revokeForFile(configApiId: String, vaultKey: String): Int {
+        db.connection().use { conn ->
+            conn.prepareStatement(
+                "UPDATE vault_file_tokens SET revoked = 1 WHERE config_api_id = ? AND vault_key = ? AND revoked = 0"
+            ).use { stmt ->
+                stmt.setString(1, configApiId)
+                stmt.setString(2, vaultKey)
+                return stmt.executeUpdate()
+            }
+        }
+    }
+
     /** List tokens for a file (admin Token Management UI). */
     fun listForFile(configApiId: String, vaultKey: String): List<VaultFileTokenInfo> {
         db.connection().use { conn ->

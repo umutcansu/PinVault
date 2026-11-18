@@ -59,13 +59,21 @@ class VaultFileStore(
         /** The file's expiry (`VaultExpiry.parse`): null keeps what the row has, [ExpirySetting] of null clears it. */
         expiresAt: ExpirySetting? = null
     ) {
-        db.connection().use { conn ->
+        // One IMMEDIATE transaction: the version is read and then written. As
+        // two steps, two uploads of one file at the same time both got version
+        // N with different content, and a device holding the first answered
+        // "already current" to the second for good.
+        db.immediateConnection().use { conn ->
+            conn.autoCommit = false
+            try {
+            // First statement on this connection: takes the write lock.
+            val watermark = versionWatermark(conn, configApiId, key)
             // Metadata only: a file that no longer decrypts can still be replaced.
             val existing = meta(configApiId, key)
             // Past the highest version this file ever had, also when it was deleted in
             // between: devices keep the newest version they verified as a floor, and a
             // file that started over at v1 would be refused by all of them (V32).
-            val newVersion = maxOf(existing?.version ?: 0, versionWatermark(conn, configApiId, key)) + 1
+            val newVersion = maxOf(existing?.version ?: 0, watermark) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
             val finalExpiry = if (expiresAt != null) expiresAt.value else existing?.expiresAt
@@ -89,6 +97,11 @@ class VaultFileStore(
                 stmt.executeUpdate()
             }
             raiseVersionWatermark(conn, configApiId, key)
+            conn.commit()
+            } catch (e: Exception) {
+                runCatching { conn.rollback() }
+                throw e
+            }
         }
     }
 
@@ -149,9 +162,14 @@ class VaultFileStore(
      * new policy. Setting the same values again changes nothing.
      */
     fun updatePolicy(configApiId: String, key: String, accessPolicy: String, encryption: String): Boolean {
-        val current = get(configApiId, key) ?: return false   // content already decrypted
-        val storedContent = storedForm(configApiId, key, encryption, current.content)
-        db.connection().use { conn ->
+        // One IMMEDIATE transaction: the content read here is written back. An
+        // upload that landed in between was silently undone.
+        db.immediateConnection().use { conn ->
+            conn.autoCommit = false
+            try {
+            versionWatermark(conn, configApiId, key)   // first statement: takes the write lock
+            val current = get(configApiId, key) ?: return false   // content already decrypted
+            val storedContent = storedForm(configApiId, key, encryption, current.content)
             conn.prepareStatement("""
                 UPDATE vault_files
                 SET version = version + CASE WHEN access_policy <> ? OR encryption <> ? THEN 1 ELSE 0 END,
@@ -167,7 +185,12 @@ class VaultFileStore(
                 stmt.setString(7, key)
                 val updated = stmt.executeUpdate() > 0
                 if (updated) raiseVersionWatermark(conn, configApiId, key)
+                conn.commit()
                 return updated
+            }
+            } catch (e: Exception) {
+                runCatching { conn.rollback() }
+                throw e
             }
         }
     }

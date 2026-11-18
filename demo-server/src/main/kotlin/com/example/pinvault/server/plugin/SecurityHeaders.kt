@@ -28,6 +28,12 @@ val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
         "X-Content-Type-Options" to "nosniff",
         "X-Frame-Options" to "DENY",
         "Referrer-Policy" to "no-referrer",
+        // No other site may embed or read the panel's answers (ZAP 2026-11-18).
+        "Cross-Origin-Resource-Policy" to "same-origin",
+        // The panel loads only its own files: isolate it from other origins' windows and resources.
+        "Cross-Origin-Embedder-Policy" to "require-corp",
+        "Cross-Origin-Opener-Policy" to "same-origin",
+        "X-Permitted-Cross-Domain-Policies" to "none",
         // The admin UI needs no powerful browser features; deny them all so a
         // slipped-in payload cannot reach for the camera, mic, location, etc.
         "Permissions-Policy" to (

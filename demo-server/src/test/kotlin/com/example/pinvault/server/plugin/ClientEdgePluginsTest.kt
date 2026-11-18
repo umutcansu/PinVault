@@ -86,11 +86,13 @@ class ClientEdgePluginsTest {
 
     // ── RevocationGate ───────────────────────────────────────────────────
 
-    private fun clientCert(clientId: String): X509Certificate {
+    private fun clientCert(
+        clientId: String, subject: String = "CN=PinVault Client: $clientId, O=PinVault Client, C=TR", validForMs: Long = 86_400_000
+    ): X509Certificate {
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
-        val name = X500Name("CN=PinVault Client: $clientId, O=PinVault Client, C=TR")
+        val name = X500Name(subject)
         val now = System.currentTimeMillis()
-        val holder = JcaX509v3CertificateBuilder(name, BigInteger.valueOf(now), Date(now - 60_000), Date(now + 86_400_000), name, pair.public)
+        val holder = JcaX509v3CertificateBuilder(name, BigInteger.valueOf(now), Date(now - 120_000), Date(now + validForMs), name, pair.public)
             .build(JcaContentSignerBuilder("SHA256withECDSA").build(pair.private))
         return JcaX509CertificateConverter().getCertificate(holder)
     }
@@ -133,6 +135,35 @@ class ClientEdgePluginsTest {
         val config = client.get("/api/v1/certificate-config")
         assertEquals(HttpStatusCode.Forbidden, config.status)
         assertTrue(config.bodyAsText().contains("reenroll_required"))
+    }
+
+    @Test
+    fun `a verified certificate that names no client id is refused, not served as nobody`() = testApplication {
+        gated(clientCert("ignored", subject = "O=PinVault Client, C=TR"))
+
+        val config = client.get("/api/v1/certificate-config")
+        assertEquals(HttpStatusCode.Forbidden, config.status)
+        assertTrue(config.bodyAsText().contains("client_identity_required"))
+    }
+
+    @Test
+    fun `a certificate that expired after the handshake is refused, and told to renew`() = testApplication {
+        gated(clientCert("tablet-07", validForMs = -60_000))
+
+        val config = client.get("/api/v1/certificate-config")
+        assertEquals(HttpStatusCode.Forbidden, config.status)
+        assertTrue(config.bodyAsText().contains("certificate_expired"))
+        assertTrue(!config.bodyAsText().contains("reenroll_required"), "an expired certificate is renewed, the identity is not given up")
+    }
+
+    @Test
+    fun `an mTLS Config API is not started without a client truststore`() {
+        val manager = com.example.pinvault.server.service.ConfigApiManager()
+        val refused = kotlin.test.assertFailsWith<IllegalArgumentException> {
+            manager.start("mtls-without-trust", 1, "mtls", "no-such-keystore.jks", null) {}
+        }
+        assertTrue(refused.message!!.contains("no client truststore"))
+        assertTrue(!manager.isRunning("mtls-without-trust"))
     }
 
     @Test

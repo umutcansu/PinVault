@@ -67,6 +67,8 @@ import java.io.FileInputStream
 import java.security.KeyStore
 
 fun main() {
+    // Before anything loads the TLS classes: they read these once.
+    com.example.pinvault.server.service.TlsHardening.apply()
     // Settings saved from the dashboard (setup wizard) fill in what the
     // environment leaves empty. If they stop the server from starting, they
     // are set aside with the reason and the process exits: the next start

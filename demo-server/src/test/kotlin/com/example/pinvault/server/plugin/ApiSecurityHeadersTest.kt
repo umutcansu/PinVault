@@ -23,6 +23,7 @@ class ApiSecurityHeadersTest {
         val plain = client.get("http://localhost/health")
         assertEquals(HttpStatusCode.OK, plain.status)
         assertEquals("nosniff", plain.headers["X-Content-Type-Options"])
+        assertEquals("same-origin", plain.headers["Cross-Origin-Resource-Policy"])
         assertNull(plain.headers[HttpHeaders.StrictTransportSecurity], "never on the plain-HTTP port")
         // JSON listeners, not HTML: the admin-UI headers do not belong here.
         assertNull(plain.headers["X-Frame-Options"])

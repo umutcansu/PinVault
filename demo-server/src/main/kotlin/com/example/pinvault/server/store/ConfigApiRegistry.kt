@@ -129,6 +129,17 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
                         stmt.executeUpdate()
                     }
                 }
+                // Devices still waiting to be let into this API: closed, so they are
+                // not approved later into a new API that took the same id. Decided
+                // requests stay as the history of who was let in.
+                conn.prepareStatement(
+                    "UPDATE enrollment_requests SET status = 'rejected', decided_by = 'system', decided_at = ? " +
+                        "WHERE config_api_id = ? AND status = 'pending'"
+                ).use { stmt ->
+                    stmt.setString(1, java.time.Instant.now().toString())
+                    stmt.setString(2, id)
+                    stmt.executeUpdate()
+                }
                 conn.prepareStatement("DELETE FROM config_apis WHERE id = ?").use { stmt ->
                     stmt.setString(1, id)
                     stmt.executeUpdate()

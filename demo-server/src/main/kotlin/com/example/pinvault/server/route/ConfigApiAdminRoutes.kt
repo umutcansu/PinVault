@@ -12,6 +12,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.log
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
@@ -141,7 +142,14 @@ fun Route.configApiAdminRoutes(
             configApiRegistry.ensureRegistered(id, port, mode)
             call.respondText(instanceJson(instance, true).toString(), ContentType.Application.Json)
         } catch (e: Exception) {
-            call.respondConfigApiError(HttpStatusCode.InternalServerError, e.message ?: e.javaClass.simpleName)
+            // A port something else holds is the caller's to change (409), and the
+            // answer names the port, not the exception's text (ZAP 2026-11-18:
+            // the bind failure's message went out as it was).
+            if (generateSequence(e as Throwable) { it.cause }.any { it is java.net.BindException }) {
+                return@post call.respondConfigApiError(HttpStatusCode.Conflict, "port $port is already in use on this server")
+            }
+            call.application.log.warn("Config API $id could not be started on port $port", e)
+            call.respondConfigApiError(HttpStatusCode.InternalServerError, "The Config API could not be started; see the server log")
         }
     }
 

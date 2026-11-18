@@ -239,7 +239,7 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
      *
      * @return false when there is no such policy or it was already stopped.
      */
-    fun stop(id: String, actor: String, now: Instant = Instant.now()): Boolean = db.connection().use { conn ->
+    fun stop(id: String, actor: String, now: Instant = Instant.now()): Boolean = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             val stopped = conn.prepareStatement(
                 "UPDATE enrollment_policies SET stopped_at = ? WHERE id = ? AND stopped_at IS NULL"
@@ -415,7 +415,7 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
      */
     fun approve(requestId: String, actor: String, now: Instant = Instant.now()): Approval {
         val request = getRequest(requestId) ?: return Approval.NOT_FOUND
-        return db.connection().use { conn ->
+        return db.immediateConnection().use { conn ->
             inTransaction(conn) {
                 // The write comes first so this transaction holds the write lock
                 // from its first statement (no read-then-upgrade deadlock).
@@ -449,7 +449,7 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
      */
     fun reject(requestId: String, actor: String, now: Instant = Instant.now()): Boolean {
         val request = getRequest(requestId) ?: return false
-        return db.connection().use { conn ->
+        return db.immediateConnection().use { conn ->
             inTransaction(conn) {
                 fun rejectFrom(status: String) = conn.prepareStatement(
                     "UPDATE enrollment_requests SET status = ?, decided_at = ?, decided_by = ? WHERE id = ? AND status = ?"

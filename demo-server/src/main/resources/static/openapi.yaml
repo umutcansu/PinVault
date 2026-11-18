@@ -1752,8 +1752,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: 'The port is already in use on this server (`port N is already in use on this server`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '500':
-          description: The listener failed to bind (port in use, bad keystore, …).
+          description: The listener could not be started for another reason (a bad keystore, …); the cause is in the server log, not in the answer.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1996,7 +2001,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HostActionResponse' }
         '400':
-          description: '`hostname` missing.'
+          description: '`hostname` missing or not a host name (checked before a key pair is generated).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2681,7 +2686,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MockServerResponse' }
         '400':
-          description: The host has no keystore, or mTLS was requested with no truststore.
+          description: '`port` not a whole number 1–65535, `mtls` not a boolean, the host has no keystore, or mTLS was requested with no truststore.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2915,7 +2920,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HostActionResponse' }
         '400':
-          description: '`hostname` missing.'
+          description: '`hostname` missing or not a host name (checked before a key pair is generated).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -5320,7 +5325,7 @@ paths:
                 properties:
                   updated: { type: string, example: 'true' }
         '400':
-          description: '`access_policy` or `encryption` missing from the body.'
+          description: '`access_policy` or `encryption` missing from the body, or not one of the allowed values (`invalid_access_policy`, `invalid_encryption`).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -5330,7 +5335,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '500':
-          description: '`access_policy` or `encryption` is not one of the allowed values.'
+          description: Unexpected server error.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -5364,7 +5369,7 @@ paths:
       operationId: createScopedVaultToken
       summary: Issue a per-device access token in a named scope
       description: |
-        Plaintext returned once. Mirror of `POST /api/v1/vault/{key}/tokens`.
+        Plaintext returned once.
 
         **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): answers `202` with
         `runAfterApproval: true`. The answer carries a secret that is shown once, so the
@@ -5397,6 +5402,11 @@ paths:
               schema: { $ref: '#/components/schemas/GeneratedVaultToken' }
         '400':
           description: '`deviceId` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: '`vault_file_not_found`: no file under this key yet. Upload it first; a token never exists ahead of its file (deleting a file revokes its tokens).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

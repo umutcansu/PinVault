@@ -54,11 +54,39 @@ val RevocationGate = createApplicationPlugin(name = "RevocationGate", ::Revocati
     val refusals = pluginConfig.refusals
 
     onCall { call ->
-        val clientId = call.clientCertId() ?: return@onCall
         val certificate = call.clientCertificate()
+        val clientId = call.clientCertId()
+        if (clientId == null) {
+            // No certificate at all: not this gate's business (a TLS listener, a test).
+            if (certificate == null) return@onCall
+            // A VERIFIED certificate that names no client id (no CN). Uploads must
+            // carry one today, but a leaf signed by an old per-certificate anchor
+            // need not: it used to pass here and every later check as nobody —
+            // served, attributed to no identity, with nothing to revoke.
+            refusals?.report(call.request.origin.remoteAddress, call.request.httpMethod.value, call.request.path(),
+                actor = "(no client id)", reason = "client certificate names no client id")
+            call.respondText(
+                """{"error":"client_identity_required","message":"The client certificate names no client id."}""",
+                ContentType.Application.Json, HttpStatusCode.Forbidden
+            )
+            return@onCall
+        }
         val reason = when {
             isRevoked(clientId) -> "revoked"
             certificate?.let(isRetiredKey) == true -> "key retired (identity forgotten or replaced)"
+            // Valid at the handshake, expired since: a connection kept open (or a
+            // resumed session) must not outlive the certificate it was opened with.
+            // Not `reenroll_required`: the device renews (the recovery door), it
+            // does not start over.
+            certificate != null && runCatching { certificate.checkValidity() }.isFailure -> {
+                refusals?.report(call.request.origin.remoteAddress, call.request.httpMethod.value, call.request.path(),
+                    actor = clientId, reason = "client certificate expired")
+                call.respondText(
+                    """{"error":"certificate_expired","message":"The client certificate has expired. Renew it."}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
+                return@onCall
+            }
             // The truststore may still hold per-certificate anchors (self-signed
             // P12s from before they came from the client CA, uploaded
             // certificates). JSSE does not check an anchor's CA flag, so the

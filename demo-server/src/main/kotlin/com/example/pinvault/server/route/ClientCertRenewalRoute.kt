@@ -139,12 +139,12 @@ fun Route.clientCertRenewalRoute(
             if (runCatching { presented.checkValidity() }.isFailure) return@post refuse("presented certificate expired")
             if (certService.spkiSha256(presented.publicKey) != candidate.spkiSha256) return@post refuse("presented certificate key differs from CSR key")
         }
-        // The very CSR the last renewal accepted, sent again: a copy of an earlier
+        // A CSR a renewal already accepted, sent again: a copy of an earlier
         // request (the recovery door takes no client certificate, the signed CSR
-        // is the proof) — not the device asking for a new certificate.
-        val csrSha256 = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest(candidate.der))
-        if (clientIdentityStore.isReplayedRenewal(clientId, csrSha256)) return@post refuse("CSR replayed (the same request the last renewal accepted)")
+        // is the proof) — not the device asking for a new certificate. Every
+        // accepted request is remembered, in one canonical form (replayKey).
+        val csrSha256 = candidate.replayKey
+        if (clientIdentityStore.isReplayedRenewal(clientId, csrSha256)) return@post refuse("CSR replayed (a request an earlier renewal accepted)")
         // Signature work only now: for the registered key of an identity that may renew.
         val csr = try {
             certService.verifyCsr(candidate)

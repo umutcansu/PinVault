@@ -137,7 +137,11 @@ fun Route.scopedVaultAdminRoutes(
                 ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing key"))
             val before = vaultFileStore.meta(cid, key)
             vaultFileStore.delete(cid, key)
-            if (before != null) audit?.record("vault_file_deleted", "Vault file $key (v${before.version}) deleted", cid, key)
+            // Its tokens go with it: a file uploaded under the same name later is
+            // another file, and the devices of this one must not open it.
+            val revoked = tokenStore.revokeForFile(cid, key)
+            if (before != null || revoked > 0) audit?.record("vault_file_deleted",
+                "Vault file $key" + (before?.let { " (v${it.version})" } ?: "") + " deleted" + if (revoked > 0) "; $revoked token(s) revoked" else "", cid, key)
             call.respond(HttpStatusCode.OK, mapOf("deleted" to key, "status" to "ok"))
         }
 
@@ -154,8 +158,11 @@ fun Route.scopedVaultAdminRoutes(
                 ?: return@put call.respond(HttpStatusCode.BadRequest,
                     mapOf("error" to "encryption field required"))
 
-            require(policy in VALID_POLICIES) { "Invalid access_policy: $policy" }
-            require(encryption in VALID_ENCRYPTIONS) { "Invalid encryption: $encryption" }
+            // The caller's mistake: 400, never the 500 of a failed require (ZAP 2026-11-18).
+            if (policy !in VALID_POLICIES) return@put call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "invalid_access_policy", "message" to "access_policy must be one of ${VALID_POLICIES.joinToString()}"))
+            if (encryption !in VALID_ENCRYPTIONS) return@put call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "invalid_encryption", "message" to "encryption must be one of ${VALID_ENCRYPTIONS.joinToString()}"))
             // `expires_at`: absent keeps the file's own; "" or null clears it; a date sets it.
             val expiryField = body["expires_at"]
             val expiresAt = try {
@@ -205,6 +212,13 @@ fun Route.scopedVaultAdminRoutes(
             if (!isValidIdentifier(deviceId)) {
                 return@post call.respond(HttpStatusCode.BadRequest, mapOf(
                     "error" to "invalid_device_id", "message" to "Letters, digits, '.', '_', ':' and '-' only, at most 64."))
+            }
+
+            // A token for a file that does not exist would open whatever is
+            // uploaded under that name later, unseen by whoever uploads it.
+            if (vaultFileStore.meta(cid, key) == null) {
+                return@post call.respond(HttpStatusCode.NotFound, mapOf(
+                    "error" to "vault_file_not_found", "message" to "Upload the file before issuing tokens for it."))
             }
 
             val generated = tokenService.generate(cid, key, deviceId)

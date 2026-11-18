@@ -63,6 +63,11 @@ class ConfigApiManager(
         trustStorePath: String? = null,
         configModule: Application.() -> Unit
     ): ConfigApiInstance {
+        // An mTLS listener without a truststore would come up as plain TLS: every
+        // device route open to anyone, under a name that says "client certificate required".
+        require(mode != "mtls" || trustStorePath != null) {
+            "Config API '$id' is mTLS but there is no client truststore: not started without client authentication"
+        }
         // Aynı id'de çalışan varsa durdur
         stop(id)
 

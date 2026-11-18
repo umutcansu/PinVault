@@ -176,10 +176,16 @@ class PinConfigStore(
     }
 
     private fun saveInTransaction(configApiId: String, config: PinConfig, before: PinConfig): PinConfig {
-        db.connection().use { conn ->
+        // On its own connection, before the transaction takes the write lock.
+        ensureConfigExists(configApiId)
+        // IMMEDIATE: this transaction reads (the first snapshot, one watermark
+        // per host) before it writes. Deferred, a commit by any other connection
+        // during those reads made the first write fail at once with
+        // SQLITE_BUSY_SNAPSHOT, whatever the busy timeout: under device load a
+        // pin change answered 500.
+        db.immediateConnection().use { conn ->
             conn.autoCommit = false
             try {
-                ensureConfigExists(configApiId)
                 // The state this save replaces, when the scope has no snapshot
                 // yet (a server upgraded to 2.9.0): without it the first change
                 // after the upgrade could not be undone.
@@ -1007,8 +1013,9 @@ class ClientCertStore(private val db: DatabaseManager) {
     fun activeHolderOf(deviceUid: String, exceptId: String): String? = db.connection().use { conn ->
         // An open-mode row from before device_uid was always written has NULL
         // there and the device id as its client id: it holds the device too.
+        // So does any other active identity whose CLIENT id is this device id.
         conn.prepareStatement(
-            "SELECT id FROM client_certs WHERE (device_uid = ? OR (device_uid IS NULL AND id = ?)) AND revoked = 0 AND id != ? LIMIT 1"
+            "SELECT id FROM client_certs WHERE (device_uid = ? OR id = ?) AND revoked = 0 AND id != ? LIMIT 1"
         ).use { stmt ->
             stmt.setString(1, deviceUid)
             stmt.setString(2, deviceUid)

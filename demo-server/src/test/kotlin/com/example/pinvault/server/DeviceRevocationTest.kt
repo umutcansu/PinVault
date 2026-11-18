@@ -808,6 +808,41 @@ class DeviceRevocationTest {
         }.status)
     }
 
+    /** [csrB64] with its ECDSA signature (r, s) written as (r, n - s): the same request, still valid, other bytes. */
+    private fun otherSignatureForm(csrB64: String, key: KeyPair): String {
+        val request = org.bouncycastle.pkcs.PKCS10CertificationRequest(Base64.getDecoder().decode(csrB64)).toASN1Structure()
+        val seq = org.bouncycastle.asn1.ASN1Sequence.getInstance(request.signature.bytes)
+        val r = org.bouncycastle.asn1.ASN1Integer.getInstance(seq.getObjectAt(0)).value
+        val s = org.bouncycastle.asn1.ASN1Integer.getInstance(seq.getObjectAt(1)).value
+        val n = (key.public as java.security.interfaces.ECPublicKey).params.order
+        val flipped = org.bouncycastle.asn1.DERSequence(arrayOf(org.bouncycastle.asn1.ASN1Integer(r), org.bouncycastle.asn1.ASN1Integer(n.subtract(s)))).encoded
+        val again = org.bouncycastle.asn1.pkcs.CertificationRequest(
+            request.certificationRequestInfo, request.signatureAlgorithm, org.bouncycastle.asn1.DERBitString(flipped))
+        return Base64.getEncoder().encodeToString(again.encoded)
+    }
+
+    @Test
+    fun `an accepted renewal request never renews again, in another signature form or after a newer renewal`() = testApplication {
+        configureApp()
+        val key = deviceKey()
+        assertEquals(HttpStatusCode.OK, tokenEnroll("renewer-2", key, deviceUid = "android-renew-2").status)
+        suspend fun renew(csr: String) = client.post("/api/v1/client-certs/renew") {
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject { put("clientId", "renewer-2"); put("csr", csr) }.toString())
+        }
+        val first = csr(key)
+        assertEquals(HttpStatusCode.OK, renew(first).status)
+
+        // The same request with (r, n - s): other bytes, the same signature to a verifier.
+        assertEquals(HttpStatusCode.Forbidden, renew(otherSignatureForm(first, key)).status)
+
+        // A newer renewal goes through; the first request is still spent after it.
+        assertEquals(HttpStatusCode.OK, renew(csr(key)).status)
+        assertEquals(HttpStatusCode.Forbidden, renew(first).status)
+        assertEquals(HttpStatusCode.Forbidden, renew(otherSignatureForm(first, key)).status)
+        assertEquals(2, identityStore.get("renewer-2")!!.renewCount)
+    }
+
     // ── K04: issuing puts the client CA back into a missing truststore ───
 
     @Test

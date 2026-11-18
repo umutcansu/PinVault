@@ -25,6 +25,10 @@ val ApiSecurityHeaders = createApplicationPlugin("ApiSecurityHeaders") {
         if (!call.response.headers.contains("X-Content-Type-Options")) {
             call.response.header("X-Content-Type-Options", "nosniff")
         }
+        // Devices are not browsers; no web page may read these answers either (ZAP 2026-11-18).
+        if (!call.response.headers.contains("Cross-Origin-Resource-Policy")) {
+            call.response.header("Cross-Origin-Resource-Policy", "same-origin")
+        }
         if (call.request.local.scheme == "https" &&
             !call.response.headers.contains(HttpHeaders.StrictTransportSecurity)
         ) {

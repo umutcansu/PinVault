@@ -230,7 +230,7 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
         now: Instant = Instant.now(),
         /** What the report ran on (`ios`, `android`); null keeps the stored one. */
         platform: String? = null
-    ) = db.connection().use { conn ->
+    ) = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             conn.prepareStatement(
                 """UPDATE attested_devices SET last_seen = ?, last_result = ?, last_arc = ?, last_reasons = ?, last_warnings = ?,

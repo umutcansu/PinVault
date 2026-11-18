@@ -81,7 +81,7 @@ class ClientIdentityStore(private val db: DatabaseManager) {
         certRecord: CertRecord? = null,
         /** What Android Key Attestation said about the key (`ENROLLMENT_ATTESTATION`); null = not checked. */
         attestation: KeyAttestation? = null
-    ): Boolean = db.connection().use { conn ->
+    ): Boolean = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             // Re-enrolling an active client id over a new key (a token minted
             // again for the same id) replaces its key: the replaced one is
@@ -186,7 +186,7 @@ class ClientIdentityStore(private val db: DatabaseManager) {
      *
      * @return how many keys were retired.
      */
-    fun supersede(clientId: String, now: String): Int = db.connection().use { conn ->
+    fun supersede(clientId: String, now: String): Int = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             conn.prepareStatement(
                 """
@@ -264,7 +264,7 @@ class ClientIdentityStore(private val db: DatabaseManager) {
      * only with [cascadeUnverified]. A device id another active identity is
      * bound to is left alone.
      */
-    fun revokeWithDevices(clientId: String, cascadeUnverified: Boolean = false): Revocation = db.connection().use { conn ->
+    fun revokeWithDevices(clientId: String, cascadeUnverified: Boolean = false): Revocation = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             val certs = conn.prepareStatement("UPDATE client_certs SET revoked = 1 WHERE id = ?").use { stmt ->
                 stmt.setString(1, clientId)
@@ -283,7 +283,7 @@ class ClientIdentityStore(private val db: DatabaseManager) {
      * stood for (as [revokeWithDevices]; usually nothing is left by then, but
      * an identity revoked before revocation did this still has its tokens).
      */
-    fun forgetWithDevices(clientId: String, now: String, cascadeUnverified: Boolean = false): Pair<Forget, DeviceCleanup?> = db.connection().use { conn ->
+    fun forgetWithDevices(clientId: String, now: String, cascadeUnverified: Boolean = false): Pair<Forget, DeviceCleanup?> = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             // Write first (see register); rolled back unless the identity qualifies.
             conn.prepareStatement("UPDATE client_keys SET retired_at = ? WHERE client_id = ? AND retired_at IS NULL").use { stmt ->
@@ -326,7 +326,8 @@ class ClientIdentityStore(private val db: DatabaseManager) {
                     for (sql in listOf(
                         "DELETE FROM client_identities WHERE client_id = ?",
                         "DELETE FROM client_certs WHERE id = ?",
-                        "DELETE FROM identity_devices WHERE client_id = ?"
+                        "DELETE FROM identity_devices WHERE client_id = ?",
+                        "DELETE FROM client_renewal_csrs WHERE client_id = ?"
                     )) {
                         conn.prepareStatement(sql).use { stmt ->
                             stmt.setString(1, clientId)
@@ -533,8 +534,23 @@ class ClientIdentityStore(private val db: DatabaseManager) {
         /** The new certificate's PEM, kept so a repeated ask can be answered with it ([certPem]). */
         certPem: String? = null
     ): Boolean =
-        db.connection().use { conn ->
-            conn.prepareStatement(
+        db.immediateConnection().use { conn ->
+          inTransaction(conn) {
+            // Every accepted request is remembered (V33), not only the last: the
+            // primary key refuses a copy in the statement that records it, so two
+            // copies racing cannot both renew.
+            if (csrSha256 != null) {
+                val fresh = conn.prepareStatement(
+                    "INSERT OR IGNORE INTO client_renewal_csrs (client_id, csr_key, accepted_at) VALUES (?, ?, ?)"
+                ).use { stmt ->
+                    stmt.setString(1, clientId)
+                    stmt.setString(2, csrSha256)
+                    stmt.setString(3, now)
+                    stmt.executeUpdate() > 0
+                }
+                if (!fresh) return@inTransaction false
+            }
+            val renewed = conn.prepareStatement(
                 """
                 UPDATE client_identities
                 SET serial = ?, not_before = ?, not_after = ?, last_renewed_at = ?, renew_count = renew_count + 1,
@@ -553,13 +569,22 @@ class ClientIdentityStore(private val db: DatabaseManager) {
                 stmt.setString(9, csrSha256)
                 stmt.executeUpdate() > 0
             }
+            // Revoked meanwhile: the request is not spent either.
+            if (!renewed) conn.rollback()
+            renewed
+          }
         }
 
-    /** Whether [csrSha256] is the CSR the last renewal of [clientId] accepted (a replay). */
+    /** Whether [csrSha256] is a CSR an earlier renewal of [clientId] accepted (a replay). */
     fun isReplayedRenewal(clientId: String, csrSha256: String): Boolean = db.connection().use { conn ->
-        conn.prepareStatement("SELECT 1 FROM client_identities WHERE client_id = ? AND last_renewal_csr_sha256 = ?").use { stmt ->
+        conn.prepareStatement(
+            "SELECT 1 FROM client_renewal_csrs WHERE client_id = ? AND csr_key = ? " +
+                "UNION ALL SELECT 1 FROM client_identities WHERE client_id = ? AND last_renewal_csr_sha256 = ?"
+        ).use { stmt ->
             stmt.setString(1, clientId)
             stmt.setString(2, csrSha256)
+            stmt.setString(3, clientId)
+            stmt.setString(4, csrSha256)
             stmt.executeQuery().next()
         }
     }
@@ -623,7 +648,7 @@ class ClientIdentityStore(private val db: DatabaseManager) {
      * certificate over it is refused from then on ([isRetired]). Every other
      * live key of the id is retired here: the P12 replaced it.
      */
-    fun recordServerMadeKey(clientId: String, spkiSha256: String, now: String) = db.connection().use { conn ->
+    fun recordServerMadeKey(clientId: String, spkiSha256: String, now: String) = db.immediateConnection().use { conn ->
         inTransaction(conn) {
             conn.prepareStatement("UPDATE client_keys SET retired_at = ? WHERE client_id = ? AND spki_sha256 <> ? AND retired_at IS NULL").use { stmt ->
                 stmt.setString(1, now)
@@ -675,14 +700,17 @@ class ClientIdentityStore(private val db: DatabaseManager) {
  * another active identity holds the device id: one active identity per
  * device, decided in the statement that writes, so two enrollments racing
  * for one device cannot both pass a check made before (an open-mode row with
- * a NULL device id and the device id as its client id holds it too).
+ * a NULL device id and the device id as its client id holds it too — and so
+ * does ANY active identity whose client id is that device id: a device id
+ * equal to another identity's client id would pass that identity's
+ * `X-Device-Id` binding).
  */
 internal const val CLIENT_CERT_UPSERT_UNLESS_REVOKED = """
     INSERT INTO client_certs (id, common_name, fingerprint, created_at, revoked, device_alias, device_uid, device_uid_proven)
     SELECT ?1, ?2, ?3, ?4, 0, ?5, ?6, ?7
     WHERE ?6 IS NULL OR NOT EXISTS (
         SELECT 1 FROM client_certs o
-        WHERE o.revoked = 0 AND o.id <> ?1 AND (o.device_uid = ?6 OR (o.device_uid IS NULL AND o.id = ?6))
+        WHERE o.revoked = 0 AND o.id <> ?1 AND (o.device_uid = ?6 OR o.id = ?6)
     )
     ON CONFLICT(id) DO UPDATE SET
         common_name = excluded.common_name,

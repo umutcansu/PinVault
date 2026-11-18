@@ -93,6 +93,25 @@ class ConfigApiPurgeTest {
     }
 
     @Test
+    fun `devices waiting to be let into the API are closed, decided requests stay`() {
+        seed("doomed")
+        seed("other")
+        fun request(id: String, api: String, status: String) = exec(
+            "INSERT INTO enrollment_requests (id, policy_id, client_id, spki_sha256, status, config_api_id, created_at) VALUES (?, 'p', ?, ?, ?, ?, 'now')",
+            id, "client-$id", "spki-$id", status, api
+        )
+        request("r1", "doomed", "pending")
+        request("r2", "doomed", "issued")
+        request("r3", "other", "pending")
+
+        registry.purge("doomed")
+
+        assertEquals(1, count("enrollment_requests", "id = 'r1' AND status = 'rejected' AND decided_by = 'system'"))
+        assertEquals(1, count("enrollment_requests", "id = 'r2' AND status = 'issued'"))
+        assertEquals(1, count("enrollment_requests", "id = 'r3' AND status = 'pending'"))
+    }
+
+    @Test
     fun `pending change requests are rejected except the one performing the delete`() {
         seed("gone")
         val stale = pendingRequest("gone")

@@ -381,6 +381,21 @@ class ClientCertLifecycleTest {
     }
 
     @Test
+    fun `a device id that is another active identity's client id is refused`() = testApplication {
+        configureApp()
+        // "alice" enrolled from its own device: its client id is not its device id.
+        assertEquals(HttpStatusCode.OK, enrollAs("alice", "android-alice").status)
+
+        // Review 2026-11-17: only a row with a NULL device id held its own client
+        // id. Another identity could name "alice" as its device and then pass
+        // the X-Device-Id binding as alice.
+        val refused = enrollAs("mallory", "alice")
+        assertEquals(HttpStatusCode.Conflict, refused.status)
+        assertTrue(refused.bodyAsText().contains("device_already_enrolled"))
+        assertNull(identityStore.get("mallory"))
+    }
+
+    @Test
     fun `a token spent by a request that issued nothing can be given back once`() {
         // Review E6: the token was spent before the certificate was issued; a refusal
         // after that ("retry with the same token") or a failure while issuing burnt it.

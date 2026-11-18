@@ -58,6 +58,13 @@ services:
       # bir kurulumda delete: WAL'ın ortak belleği makine sınırını aşmaz. E2E
       # koşusu bu yüzden delete ister.
       DB_JOURNAL_MODE: ${DB_JOURNAL_MODE:-}
+      # Bir kaydın diske ne kadar sıkı yazıldığı: boş = WAL'da normal, delete'te
+      # full. normal'de elektrik kesintisi ya da işletim sistemi çökmesinde son
+      # saniyelerin kayıtları geri gelebilir: bir iptal, harcanmış bir kayıt kodu,
+      # denetim satırları. Böyle bir çöküşten sonra son işlemleri panelden kontrol
+      # edin. Bunu kabul etmiyorsanız full verin ve yük testini kendi diskinizde
+      # yeniden koşun (demo-server/loadtest; ölçülen sayılar normal içindir).
+      DB_SYNCHRONOUS: ${DB_SYNCHRONOUS:-}
       CERTS_DIR: /data/certs
       SIGNING_KEY_PATH: /data/signing-key.pem
       # demo | production. Sunucu okumaz; entrypoint.sh üretim profilinde açılış

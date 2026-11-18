@@ -114,7 +114,15 @@ class CertChangePlanner(
      */
     fun plan(kind: Kind, scope: String, hostname: String?, contentType: String?, body: ByteArray): CertPlan {
         val plan = when (kind) {
-            Kind.ADD_GENERATED -> certService.planGenerated(jsonField(body, "hostname") ?: throw PlanRefused(HttpStatusCode.BadRequest, "hostname gerekli"))
+            Kind.ADD_GENERATED -> {
+                val name = jsonField(body, "hostname") ?: throw PlanRefused(HttpStatusCode.BadRequest, "hostname gerekli")
+                // Checked BEFORE a key is made: the name goes into the certificate's
+                // subject (`CN=<name>`), and a name that is not a host name either
+                // broke the X.500 parser (500) or cost a 2048-bit RSA key generation
+                // for a plan the host-name check below refuses anyway (ZAP 2026-11-18).
+                HostPatternRules.error(name)?.let { throw PlanRefused(HttpStatusCode.BadRequest, it) }
+                certService.planGenerated(name)
+            }
             Kind.ADD_FETCHED -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), null, jsonField(body, "backupPin"))
             Kind.ADD_UPLOADED -> {
                 val form = form(contentType, body)
